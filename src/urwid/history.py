@@ -210,7 +210,6 @@ def _history_metadata(run_fd, run_id):
         r"^" + _HISTORY_STAMP + r" INFO started " + _HISTORY_MODE
         + r" by .+; script ([A-Za-z0-9.+_-]{1,64}) [0-9a-f]{64}$",
         start, _history_re.MULTILINE)
-    ticket = _history_re.search(r"^Operator .+ \| ticket (.*)$", summary, _history_re.MULTILINE)
     try:
         identifiers = _history_identity(fields) if checksum else None
     except ValueError:
@@ -221,7 +220,6 @@ def _history_metadata(run_fd, run_id):
         "version": version.group(1) if version else start_record.group(2) if start_record else "Unknown",
         "state": state,
         "counts": counts,
-        "ticket": _history_text(ticket.group(1))[:120] if ticket else "",
         "checksum": checksum,
         "identity": identifiers,
         "related": related,
@@ -740,7 +738,7 @@ class RunHistory:
             if self.follow_up_only and not needs_attention:
                 continue
             text = " ".join((run["id"], run["mode"], run["state"], run["version"],
-                             run["ticket"], "errors" if errors else "")).casefold()
+                             "errors" if errors else "")).casefold()
             if all(token in text for token in tokens):
                 self.matching.append(run)
         message = "Page {}/{}  |  {} matching".format(
@@ -801,8 +799,6 @@ class RunHistory:
             rows.append(_history_urwid.Text(("warning", "The run log records errors. Open it for context.")))
         if not run["checksum"]:
             rows.append(_history_urwid.Text(("warning", "Manifest checksum missing. Comparison is unavailable.")))
-        if run["ticket"] and run["ticket"] != "none":
-            rows.append(_history_urwid.Text("Ticket " + run["ticket"]))
         if notice:
             rows.append(_history_urwid.Text(("warning", notice)))
         rows.append(_history_urwid.Divider())

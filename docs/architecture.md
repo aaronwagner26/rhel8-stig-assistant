@@ -13,4 +13,4 @@ The release provides two standalone Bash executables. The shared Bash engine own
 
 The backend prepares eligible changes from the current system and verifies the reviewed scope, source inputs, and change signatures before writing. The CLI and terminal interface use the same backend. A recheck is a separate read-only Status run linked to the original report.
 
-Treat report schema, manifest identity, complete review, and approval semantics as compatibility requirements. When updating the pinned source, review the backend changes and record test results for both build outputs. [Release process](releasing.md) · [Validation record](validation-0.6.4.md)
+Treat report schema, manifest identity, complete review, and approval semantics as compatibility requirements. When updating the pinned source, review the backend changes and record test results for both build outputs. [Release process](releasing.md) · [Validation record](validation-0.6.6.md)

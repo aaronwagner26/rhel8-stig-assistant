@@ -724,7 +724,7 @@ class Workbench:
             "group": WorkbenchCycle("Text report order", [("", "Vuln-ID"), ("result", "Result group")],
                                     self.context.get("group")),
         }
-        for field, caption in (("ticket", "Change ticket  "), ("site_config", "Site config  "),
+        for field, caption in (("site_config", "Site config  "),
                                ("report_dir", "Report directory  "), ("backup_dir", "Backup directory  ")):
             value = str(self.context.get(field) or "")
             self.setting_fields[field] = WorkbenchEdit(caption, value)
@@ -754,7 +754,7 @@ class Workbench:
         ])
         if not can_apply:
             controls.append(self.setting_fields["group"])
-        for key in ("ticket", "site_config", "report_dir", "backup_dir"):
+        for key in ("site_config", "report_dir", "backup_dir"):
             field = urwid.AttrMap(self.setting_fields[key], "input", "focus")
             if key == "site_config":
                 field = WorkbenchActions([field, (12, wb_button("Browse", self.browse_site_config))], dividechars=1)
@@ -812,7 +812,7 @@ class Workbench:
 
     def settings_values(self):
         fields = self.setting_fields
-        format_names = ("mode", "ticket", "risk", "defer", "format", "group",
+        format_names = ("mode", "risk", "defer", "format", "group",
                         "site_config", "report_dir", "backup_dir")
         if self.context.get("can_apply"):
             fields["group"].index = 0

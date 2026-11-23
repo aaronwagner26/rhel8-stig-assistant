@@ -1,7 +1,9 @@
 """Check the standalone build without assessing or modifying a host."""
 
 import argparse
+import csv
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -57,21 +59,42 @@ for id in "$@"; do
     fi
 done
 """
+SAMPLE_REPORT = r"""
+set -eo pipefail
+source "$1"
+init_options
+register_rules
+parse_args --status --only V-230245
+resolve_scope
+init_results
+RUN_ID=20261120T180000Z.QWeRTy12 RUN_TIMESTAMP=2026-11-20T18:00:00Z
+OPERATOR=fixture HOST_ID=fixture SCRIPT_HASH=fixture ARCH=x86_64 BOOT_MODE=BIOS KERNEL=fixture
+BEFORE[V-230245]=PASS AFTER[V-230245]=PASS ACTIONS[V-230245]=UNCHANGED
+DETAIL[V-230245]='Synthetic evidence' ASSESSMENT_SOURCE[V-230245]=live
+ASSESSMENT_AT[V-230245]=$RUN_TIMESTAMP STATUS_FRESH_COUNT=1
+case $2 in
+    text) report_text ;;
+    json) report_json ;;
+    csv) report_csv ;;
+esac
+"""
 
 
-def run(*command):
+def run(*command, expected_returncode=0):
     env = dict(os.environ, LC_ALL="C", NO_COLOR="1")
     result = subprocess.run([str(arg) for arg in command], cwd=ROOT, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             check=False, timeout=60)
-    if result.returncode != 0:
+    if result.returncode != expected_returncode:
         detail = result.stderr.decode("utf-8", "replace").strip()
-        raise SystemExit("{} exited with status {}\n{}".format(command[0], result.returncode, detail))
+        raise SystemExit("{} exited with status {}, expected {}\n{}".format(
+            command[0], result.returncode, expected_returncode, detail))
     return result.stdout
 
 
-def bash(*args):
-    return run("bash", "--noprofile", "--norc", "-p", *args)
+def bash(*args, expected_returncode=0):
+    return run("bash", "--noprofile", "--norc", "-p", *args,
+               expected_returncode=expected_returncode)
 
 
 def require(condition, message):
@@ -108,6 +131,30 @@ def check_registry(actual):
     return findings, sorted(golden)
 
 
+def check_ticket_removal(artifact):
+    require(b"--change-ticket" not in bash(artifact, "--help"),
+            "{} still advertises the removed ticket option.".format(artifact.name))
+    bash(artifact, "--change-ticket", "CHG-262", expected_returncode=64)
+
+    def sample(report_format):
+        return bash("-c", SAMPLE_REPORT, "sample-report", artifact, report_format).decode("utf-8")
+
+    text = sample("text")
+    require("\nOperator fixture\n" in text and "V-230245" in text,
+            "{} changed text report metadata or findings.".format(artifact.name))
+    structured = json.loads(sample("json"))
+    require("change_ticket" not in structured and structured.get("operator") == "fixture"
+            and structured["results"][0]["id"] == "V-230245",
+            "{} retained the JSON ticket or changed report data.".format(artifact.name))
+    reader = csv.DictReader(sample("csv").splitlines())
+    columns = reader.fieldnames
+    row = next(reader)
+    require("change_ticket" not in columns and None not in row
+            and row.get("operator") == "fixture" and row.get("id") == "V-230245"
+            and row.get("assessment_observed_at") == "2026-11-20T18:00:00Z",
+            "{} retained the CSV ticket or misaligned report columns.".format(artifact.name))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-sha256", help="Verify the Urwid build against a published digest.")
@@ -130,6 +177,7 @@ def main():
         bash("-n", artifact)
         self_hash = bash(artifact, "--self-hash").split(maxsplit=1)[:1]
         require(self_hash == [digest.encode("ascii")], "CLI self-hash differs for {}.".format(artifact.name))
+        check_ticket_removal(artifact)
     version = runpy.run_path(str(BUILDER))["VERSION"]
     cli_version = bash(RELEASE, "--version").decode("utf-8")
     require(cli_version.startswith("{} {} | ".format(RELEASE.name, version)),

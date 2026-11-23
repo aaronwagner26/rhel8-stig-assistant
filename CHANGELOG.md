@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.6-urwid-dev and 0.5.7-dev
+
+- Remove the change-ticket option and report field from both editions. Remove the ticket field and handoff view from Urwid. Saved reports from earlier editions remain readable.
+
 ## 0.6.5-urwid-dev and 0.5.6-dev
 
 - Reuse eligible observations automatically when running Classic Status. Show live and reused counts and the original observation date. `--fresh` forces a live Status assessment.

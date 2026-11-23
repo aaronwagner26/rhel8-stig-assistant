@@ -27,9 +27,9 @@ def write_private(path, text):
     os.chmod(path, 0o600)
 
 
-def fixture_report(base, run_id, completed=False, interrupted=False, ticket="CHG-262",
+def fixture_report(base, run_id, completed=False, interrupted=False,
                    host=HOST, archive=ARCHIVE, results=None, resolved=False, mode="apply",
-                   excluded=(), log_error=False, script=SHA, related=""):
+                   excluded=(), log_error=False, script=SHA, related="", legacy_ticket=None):
     path = os.path.join(base, run_id)
     os.mkdir(path, 0o700)
     manifest = "schema\t1\nrun\t{}\nscript\t{}\nhost\t{}\narchive\t{}\n".format(
@@ -50,21 +50,26 @@ def fixture_report(base, run_id, completed=False, interrupted=False, ticket="CHG
     if completed:
         log += STAMP + " INFO completed with {} unresolved, {} pending, 0 skipped\n".format(
             0 if resolved else 2, 0 if resolved else 1)
+        operator = "Operator root"
+        if legacy_ticket is not None:
+            operator += " | ticket " + legacy_ticket
         write_private(os.path.join(path, "summary.txt"),
                       "Run {} | {} | {}\nScript 0.5.4-dev | SHA-256 {}\n"
-                      "Operator root | ticket {}\n"
-                      .format(run_id, STAMP, mode, script, ticket)
+                      .format(run_id, STAMP, mode, script) + operator + "\n"
                       + ("Related run " + related + "\n" if related else "")
                       + "\nReport fixture \x1b[31mwithout controls\n"
                       + "".join("{}  FAIL  {}  {}  Saved evidence\n".format(*row) for row in results or ()))
     write_private(os.path.join(path, "run.log"), log)
     if results is not None:
-        write_private(os.path.join(path, "results.json"), json.dumps({
+        report = {
             "run_id": run_id, "script_sha256": script, "host_id": host, "archive_sha256": archive,
             "mode": mode,
             "results": [{"id": finding, "assessment": assessment, "action": action}
                         for finding, assessment, action in results],
-        }))
+        }
+        if legacy_ticket is not None:
+            report["change_ticket"] = legacy_ticket
+        write_private(os.path.join(path, "results.json"), json.dumps(report))
     return path
 
 
@@ -90,9 +95,23 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in runs], [INCOMPLETE, INTERRUPTED, COMPLETED])
         self.assertEqual([row["state"] for row in runs], ["Incomplete", "Interrupted", "Completed"])
         self.assertEqual(runs[-1]["counts"], ("2", "1", "0"))
-        self.assertEqual(runs[-1]["ticket"], "CHG-262")
         self.assertEqual(runs[0]["version"], "0.5.4-dev")
         self.assertEqual((limited, omitted), (False, 1))
+
+    def test_legacy_reports_open_and_compare_without_ticket_metadata(self):
+        fixture_report(self.base.name, COMPLETED, completed=True, legacy_ticket="CHG-262",
+                       results=[("V-244531", "FAIL", "UNCHANGED")])
+        fixture_report(self.base.name, INCOMPLETE, completed=True, mode="status",
+                       results=[("V-244531", "PASS", "UNCHANGED")])
+        screen = history.RunHistory(self.base.name, lambda: None)
+        legacy = next(run for run in screen.runs if run["id"] == COMPLETED)
+        self.assertNotIn("ticket", legacy)
+        screen.open_run(legacy)
+        self.assertNotIn("CHG-262", visible(screen))
+        screen.open_artifact("summary.txt")
+        self.assertIn("Operator root | ticket CHG-262", visible(screen))
+        comparison = history._history_compare(self.base.name, COMPLETED, INCOMPLETE)
+        self.assertEqual(comparison["assessment_changes"], 1)
 
     def test_refuses_parent_link_unsafe_mode_and_special_files(self):
         base_parent = os.path.join(self.base.name, "parent")
@@ -125,7 +144,8 @@ class HistoryTests(unittest.TestCase):
         self.assertIn("Saved runs", visible(screen))
         self.assertIn(INCOMPLETE, visible(screen))
         screen.widget.keypress(size, "/")
-        for char in "CHG-262":
+        suffix = COMPLETED[-8:]
+        for char in suffix:
             screen.widget.keypress(size, char)
         self.assertIn(COMPLETED, visible(screen))
         self.assertNotIn(INCOMPLETE, visible(screen))
@@ -137,7 +157,7 @@ class HistoryTests(unittest.TestCase):
         self.assertNotIn("\x1b", visible(screen))
         screen.widget.keypress(size, "esc")
         screen.widget.keypress(size, "esc")
-        self.assertEqual(screen.search, "CHG-262")
+        self.assertEqual(screen.search, suffix)
         screen.widget.keypress(size, "esc")
         self.assertEqual(calls, ["back"])
 
@@ -282,12 +302,12 @@ class HistoryTests(unittest.TestCase):
             self.assertIn("Page 1/3  |  2 matching", visible(screen))
             self.assertIn("Runs 1-2 of 5 indexed", visible(screen))
             screen.widget.keypress(size, "/")
-            screen.entry.set_edit_text("CHG-262")
+            screen.entry.set_edit_text("apply")
             screen.widget.keypress(size, "enter")
             screen.widget.keypress(size, "]")
             self.assertEqual(read_metadata.call_count, 4)
             self.assertIn("Runs 3-4 of 5 indexed", visible(screen))
-            self.assertEqual(screen.search, "CHG-262")
+            self.assertEqual(screen.search, "apply")
             screen.widget.keypress(size, "down")
             self.assertEqual(screen.focused_run(), INTERRUPTED)
             screen.widget.keypress(size, "enter")
@@ -642,14 +662,15 @@ class HistoryTests(unittest.TestCase):
         recheck = "20261120T180000Z.AAAAAAAA"
         fixture_report(self.base.name, original, completed=True, results=[("V-244531", "FAIL", "UNCHANGED")])
         fixture_report(self.base.name, recheck, completed=True, related=original, mode="status",
-                       ticket="CHG-RECHECK", results=[("V-244531", "PASS", "UNCHANGED")])
+                       results=[("V-244531", "PASS", "UNCHANGED")])
         size = (75, 24)
         with mock.patch.object(history, "_HISTORY_PAGE_SIZE", 1):
             screen = history.RunHistory(self.base.name, lambda: None)
             screen.widget.keypress(size, "]")
             self.assertEqual([run["id"] for run in screen.runs], [recheck])
             screen.widget.keypress(size, "/")
-            screen.entry.set_edit_text("CHG-RECHECK")
+            suffix = recheck[-8:]
+            screen.entry.set_edit_text(suffix)
             screen.widget.keypress(size, "enter")
             screen.widget.keypress(size, "enter")
             self.assertIn("Related run " + original, visible(screen))
@@ -670,7 +691,7 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(screen.selected["id"], recheck)
             self.assertEqual(screen.walker[screen.walker.focus].original_widget.get_label(), "Open related run")
             screen.widget.keypress(size, "esc")
-            self.assertEqual((screen.index_page, screen.search, screen.focused_run()), (1, "CHG-RECHECK", recheck))
+            self.assertEqual((screen.index_page, screen.search, screen.focused_run()), (1, suffix, recheck))
 
     def test_saved_related_lookup_checks_missing_mismatched_and_interrupted_reports(self):
         sample = [("V-244531", "FAIL", "UNCHANGED")]

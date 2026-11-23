@@ -315,8 +315,6 @@ class _AttendedPrompt:
                     content.append(_att_button(
                         _HISTORY_ARTIFACT_TITLES[basename] + "  (" + basename + ")",
                         lambda path=path: self.artifact(path)))
-            if request.get("handoff"):
-                content.append(_att_button("Change handoff summary", self.handoff))
             if len(content) == 3:
                 content += _att_block([("muted", "No report files were provided.")])
             else:
@@ -368,12 +366,8 @@ class _AttendedPrompt:
                 lines[2:2] = [("warning", "An operation was blocked. See Follow-up for next steps.")]
             if request.get("recheck_note"):
                 lines[2:2] = [("accent", request["recheck_note"])]
-            handoff = "  |  ".join(value for value in (
-                "Ticket " + _att_text(request["ticket"]) if request.get("ticket") else "",
-                "Operator " + _att_text(request["operator"]) if request.get("operator") else "",
-            ) if value)
-            if handoff:
-                lines[2:2] = [("muted", handoff)]
+            if request.get("operator"):
+                lines[2:2] = [("muted", "Operator " + _att_text(request["operator"]))]
             if rows:
                 assessments = [row.get("assessment") for row in rows]
                 labels = (("PASS", "Pass", "success"), ("FAIL", "Fail", "danger"),
@@ -410,13 +404,6 @@ class _AttendedPrompt:
 
     def back_to_artifact_list(self):
         self.results("reports", report_focus=self.artifact_path)
-
-    def handoff(self):
-        self.page = "handoff"
-        content = _att_block([("base", self.request.get("handoff"))])
-        self.screen("Change handoff", "Run " + self.request.get("run_id", ""), content,
-                    [("Back to reports", lambda: self.results("reports"), "button")], 0,
-                    "PgUp/PgDn scroll | g/G jump | Esc back")
 
     def accept_input(self):
         value = self.current_editor.edit_text
@@ -477,8 +464,6 @@ class _AttendedPrompt:
                     self.finish(2)
             elif self.page == "artifact":
                 self.back_to_artifact_list()
-            elif self.page == "handoff":
-                self.results("reports")
             elif self.page == "recheck_confirm":
                 self.results("follow_up")
             else:

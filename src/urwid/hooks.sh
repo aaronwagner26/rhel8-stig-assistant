@@ -105,7 +105,6 @@ urwid_set_recheck_args() {
         digest=$(urwid_site_settings_digest) || return 1
         URWID_RECHECK_ARGS+=(--config "$site" --expect-site-settings "$digest")
     fi
-    if [[ -n $TICKET ]]; then URWID_RECHECK_ARGS+=(--change-ticket "$TICKET"); fi
     if (( DEFER )); then URWID_RECHECK_ARGS+=(--defer-service-actions); fi
     if [[ $REPORT_GROUP_BY == result ]]; then URWID_RECHECK_ARGS+=(--group-by result); fi
     return 0
@@ -137,7 +136,7 @@ urwid_write_follow_up() {
     fi
 }
 
-urwid_handoff_group() {
+urwid_outcome_group() {
     local label=$1 offset
     shift
     local -a ids=("$@")
@@ -149,12 +148,12 @@ urwid_handoff_group() {
     done
 }
 
-urwid_ticket_handoff() {
+urwid_outcome_summary() {
     local id assessment action described=0
     local -a verified_apply_ids=() applied_open=() activation_pending=() blocked_ids=() failed=() skipped=() manual=() open_ids=() restored=()
-    printf 'Change handoff\nRun %s | %s | Build %s %s\n' \
+    printf 'Run outcomes\nRun %s | %s | Build %s %s\n' \
         "$RUN_ID" "$MODE" "$SCRIPT_VERSION" "$SCRIPT_HASH" || return 1
-    printf 'Ticket %s | Selected findings %s\n' "${TICKET:-none}" "${#SCOPE[@]}" || return 1
+    printf 'Selected findings %s\n' "${#SCOPE[@]}" || return 1
     for id in "${SCOPE[@]}"; do
         assessment=${AFTER[$id]} action=${ACTIONS[$id]}
         case $action in
@@ -175,15 +174,15 @@ urwid_ticket_handoff() {
     if (( ! described )); then
         printf '%s\n' 'No changes or outstanding findings recorded.' || return 1
     fi
-    urwid_handoff_group 'Applied and verified' "${verified_apply_ids[@]}" &&
-        urwid_handoff_group 'Applied, verification still open' "${applied_open[@]}" &&
-        urwid_handoff_group 'Pending activation' "${activation_pending[@]}" &&
-        urwid_handoff_group 'Blocked' "${blocked_ids[@]}" &&
-        urwid_handoff_group 'Failed operation' "${failed[@]}" &&
-        urwid_handoff_group 'Skipped' "${skipped[@]}" &&
-        urwid_handoff_group 'Manual follow-up' "${manual[@]}" &&
-        urwid_handoff_group 'Other unresolved checks' "${open_ids[@]}" &&
-        urwid_handoff_group 'Restored, review active state' "${restored[@]}" &&
+    urwid_outcome_group 'Applied and verified' "${verified_apply_ids[@]}" &&
+        urwid_outcome_group 'Applied, verification still open' "${applied_open[@]}" &&
+        urwid_outcome_group 'Pending activation' "${activation_pending[@]}" &&
+        urwid_outcome_group 'Blocked' "${blocked_ids[@]}" &&
+        urwid_outcome_group 'Failed operation' "${failed[@]}" &&
+        urwid_outcome_group 'Skipped' "${skipped[@]}" &&
+        urwid_outcome_group 'Manual follow-up' "${manual[@]}" &&
+        urwid_outcome_group 'Other unresolved checks' "${open_ids[@]}" &&
+        urwid_outcome_group 'Restored, review active state' "${restored[@]}" &&
         printf '%s\n\n' 'Full evidence and diffs are in the protected run reports.'
 }
 
@@ -213,10 +212,8 @@ urwid_results_request() {
         urwid_prompt_value recheck_id "$recheck_id"
     fi
     urwid_prompt_value format "$FORMAT"
-    urwid_prompt_value ticket "${TICKET-}"
     urwid_prompt_value operator "${OPERATOR-}"
     urwid_prompt_value summary "$(render_applied_ids)"
-    urwid_prompt_value handoff "$(urwid_ticket_handoff)"
     printf ',"rows":['
     for id in "${SCOPE[@]}"; do
         printf '%s{"id":' "$delimiter"

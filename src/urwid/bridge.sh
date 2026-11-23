@@ -174,7 +174,7 @@ urwid_state() {
     if (( URWID_ASSESSED )); then assessed=true; fi
     printf '{"type":"state","context":{'
     urwid_json_fields host "${HOST_NAME:-unavailable}" mode "$MODE" version "$SCRIPT_VERSION" \
-        baseline "$BASELINE" source "${CKL_UI_SUMMARY:-Embedded catalog}" ticket "$TICKET" \
+        baseline "$BASELINE" source "${CKL_UI_SUMMARY:-Embedded catalog}" \
         risk "$MAX_RISK" risk_cap "$URWID_RISK_CAP" format "$FORMAT" group "$REPORT_GROUP_BY" \
         site_config "$CONFIG_FILE" report_dir "$REPORT_BASE" backup_dir "$BACKUP_BASE" \
         arch "${ARCH:-unavailable}" kernel "${KERNEL:-unavailable}" boot_mode "${BOOT_MODE:-unavailable}" \
@@ -474,8 +474,8 @@ urwid_inspect_setup() {
 urwid_set_settings() {
     local action=$1 path=$2
     shift 2
-    local mode=$1 ticket=$2 risk=$3 defer=$4 format=$5 group=$6 site=$7 reports=$8 backups=$9
-    local previous_mode=$MODE previous_ticket=$TICKET previous_risk=$MAX_RISK previous_defer=$DEFER
+    local mode=$1 risk=$2 defer=$3 format=$4 group=$5 site=$6 reports=$7 backups=$8
+    local previous_mode=$MODE previous_risk=$MAX_RISK previous_defer=$DEFER
     local previous_format=$FORMAT previous_group=$REPORT_GROUP_BY previous_config=$CONFIG_FILE
     local previous_reports=$REPORT_BASE previous_backups=$BACKUP_BASE
     local new_managed new_alternates previous_managed=$MODPROBE_MANAGED previous_alternates=$GPGCHECK_ALTERNATE_REPOS
@@ -496,8 +496,8 @@ urwid_set_settings() {
         return
     fi
     if [[ ! $risk =~ ^(low|medium|high)$ || ! $defer =~ ^[01]$ || ! $format =~ ^(text|json|csv)$ ||
-          ( -n $group && $group != result ) || ${#ticket} -gt 120 || $ticket == *[^[:print:]]* ]]; then
-        urwid_event error 'Check the risk, activation, format, grouping and printable change ticket fields.'
+          ( -n $group && $group != result ) ]]; then
+        urwid_event error 'Check the risk, activation, format, and grouping settings.'
         return
     fi
     if (( $(risk_level "$risk") > $(risk_level "$URWID_RISK_CAP") || defer < URWID_DEFER_CAP )); then
@@ -541,13 +541,13 @@ urwid_set_settings() {
         urwid_event error "Backup directory. $backup_status"
         return
     fi
-    MODE=$mode TICKET=$ticket MAX_RISK=$risk DEFER=$defer FORMAT=$format
+    MODE=$mode MAX_RISK=$risk DEFER=$defer FORMAT=$format
     REPORT_GROUP_BY=$group CONFIG_FILE=$site REPORT_BASE=$reports BACKUP_BASE=$backups
     MODPROBE_MANAGED=$new_managed GPGCHECK_ALTERNATE_REPOS=$new_alternates
     urwid_prepare_scope "$action" "$path"
     result=$?
     if (( result != 0 )); then
-        MODE=$previous_mode TICKET=$previous_ticket MAX_RISK=$previous_risk DEFER=$previous_defer FORMAT=$previous_format
+        MODE=$previous_mode MAX_RISK=$previous_risk DEFER=$previous_defer FORMAT=$previous_format
         REPORT_GROUP_BY=$previous_group CONFIG_FILE=$previous_config REPORT_BASE=$previous_reports BACKUP_BASE=$previous_backups
         MODPROBE_MANAGED=$previous_managed GPGCHECK_ALTERNATE_REPOS=$previous_alternates
     fi
@@ -584,9 +584,9 @@ urwid_dispatch() {
             urwid_browse || urwid_event error 'Assessment refresh stopped. Check the scope and source checklist.' ;;
         review:2) urwid_send_review "$1" "$2" ;;
         detail:1) urwid_send_detail "$1" ;;
-        settings:9) urwid_set_settings scan '' "$@" ;;
-        inspect:9) urwid_set_settings check '' "$@" ;;
-        setup:11)
+        settings:8) urwid_set_settings scan '' "$@" ;;
+        inspect:8) urwid_set_settings check '' "$@" ;;
+        setup:10)
             if [[ $1 == import || $1 == load ]]; then urwid_set_settings "$@"
             else urwid_event error 'Choose a supported selection source.'; fi ;;
         import:1|load:1)

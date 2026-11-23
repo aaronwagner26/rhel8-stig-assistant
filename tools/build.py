@@ -8,9 +8,9 @@ import re
 ROOT = Path(__file__).resolve().parent.parent
 URWID_SOURCE = ROOT / "src" / "urwid"
 BACKEND = ROOT / "src" / "classic" / "rhel8-stig.sh"
-BACKEND_SHA256 = "5eada3181356e55ef7a0cbeecc450dda7c179878cdd2ea902648f44f9f461a69"
-CLASSIC_VERSION = "0.5.6-dev"
-VERSION = "0.6.5-urwid-dev"
+BACKEND_SHA256 = "c346ad42f744f76833e0c87586a70278ee42600402e5601ff1158c92d1c9134a"
+CLASSIC_VERSION = "0.5.7-dev"
+VERSION = "0.6.6-urwid-dev"
 OUTPUT = ROOT / "dist" / "rhel8-stig-urwid.sh"
 CLASSIC_OUTPUT = OUTPUT.with_name(BACKEND.name)
 DELIMITER = "__RHEL_STIG_EMBEDDED_URWID__"
@@ -67,14 +67,16 @@ def build():
     shell = keep_shared_tui_helpers(baseline.decode("utf-8"))
     shell = replace_once(shell, "# rhel8-stig.sh — Attended",
                          "# rhel8-stig-urwid.sh — Attended")
-    shell = replace_once(shell, "# {} | 2026-11-23 | Verified incremental Classic Status.".format(CLASSIC_VERSION),
-                         "# {} | 2026-11-23 | Urwid workbench and assessment parser fixes.".format(VERSION))
+    shell = replace_once(shell, "# {} | 2026-11-23 | Simplify run settings and reports.".format(CLASSIC_VERSION),
+                         "# {} | 2026-11-23 | Simplify run settings and reports.".format(VERSION))
     shell = replace_once(shell, "readonly SCRIPT_VERSION=" + CLASSIC_VERSION,
                          "readonly SCRIPT_VERSION=" + VERSION)
     shell = replace_once(shell, "readonly ASSESSMENT_CACHE_DEFAULT=1",
                          "readonly ASSESSMENT_CACHE_DEFAULT=0")
     classic_heading = CLASSIC_VERSION + " (2026-11-23)"
     shell = replace_once(shell, classic_heading, VERSION + """ (2026-11-23)
+  Remove the Change ticket field and its handoff from the workbench.
+0.6.5-urwid-dev (2026-11-23)
   Fix GNU awk parsing for UEFI GRUB password and GNOME logout checks.
 0.6.4-urwid-dev (2026-11-23)
   Extend the shared catalog with 96 additional attended remediation paths.
@@ -246,7 +248,7 @@ a controlling terminal. With no explicit selection source it starts unchecked.""
     fi""")
     shell = replace_once(shell,
                          '    write_admin_actions | tr',
-                         '    (urwid_ticket_handoff && write_admin_actions && urwid_write_follow_up) | tr')
+                         '    (urwid_outcome_summary && write_admin_actions && urwid_write_follow_up) | tr')
     python_source = "\n\n".join((URWID_SOURCE / name).read_text(encoding="utf-8").strip()
                                 for name in ("workbench.py", "path_browser.py", "outcomes.py",
                                              "attended.py", "history.py", "runtime.py"))

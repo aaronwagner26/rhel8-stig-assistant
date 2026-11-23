@@ -1,6 +1,6 @@
 #!/bin/bash -p
 # rhel8-stig.sh — Attended DISA RHEL 8 assessment and remediation utility.
-# 0.5.6-dev | 2026-11-23 | Verified incremental Classic Status.
+# 0.5.7-dev | 2026-11-23 | Simplify run settings and reports.
 # Target: genuine RHEL 8.10 x86_64 with systemd. Boot behavior needs guest validation.
 # Baseline: DISA RHEL 8 STIG Version 2 Release 9 (Sunset, 2026-10-05).
 # Archive: U_RHEL_8_V2R9_STIG.zip
@@ -8,7 +8,7 @@
 #
 # 1. Metadata, compatibility, and change history
 
-readonly SCRIPT_VERSION=0.5.6-dev
+readonly SCRIPT_VERSION=0.5.7-dev
 readonly BASELINE='RHEL 8 STIG V2R9 (Sunset)'
 readonly ARCHIVE_SHA256=620bdff4d4a5b07b58817297dd5255a3f8f981a7227405c07b098588fe55cdee
 readonly ARCHIVE_URL=https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_RHEL_8_V2R9_STIG.zip
@@ -16,6 +16,8 @@ readonly ASSESSMENT_CACHE_DEFAULT=1
 
 changelog() {
     cat <<'EOF'
+0.5.7-dev (2026-11-23)
+  Remove the optional change ticket field from settings and reports.
 0.5.6-dev (2026-11-23)
   Reuse verified unchanged results during Classic Status. Add --fresh and
   report the checks performed live. Fix GRUB and GNOME AWK expressions.
@@ -106,7 +108,6 @@ Options for run modes:
   --resume RUN-ID                Reassess a previous run using its original scope.
                                  Use with --apply to request fresh attended changes.
   --fresh                        Check every selected Status finding live.
-  --change-ticket TEXT           Record a non-sensitive change reference.
   --color auto|always|never      Explicit choice wins. Auto honors NO_COLOR/TERM=dumb.
   --no-color                     Same as --color never.
   --verbose                      Show redacted detail in terminal diagnostics.
@@ -140,7 +141,7 @@ EOF
 
 init_options() {
     MODE=status MODE_SET=0 SELECT_EXPLICIT=0 CONFIG_FILE='' RESUME_ID='' ROLLBACK_ID=''
-    EXPLAIN_ID='' COLOR=auto FORMAT=text REPORT_GROUP_BY='' TICKET='' DEFER=0 VERBOSE=0 MAX_RISK=high
+    EXPLAIN_ID='' COLOR=auto FORMAT=text REPORT_GROUP_BY='' DEFER=0 VERBOSE=0 MAX_RISK=high
     GUI=0 REVIEW_EACH=0 IMPLEMENT_DIFF=0 FORCE_FRESH=0 CKL_FILE='' CKL_PATH='' CKL_SHA256='' CKL_SECTION_OPT='' CKL_HOST_ACK=''
     CKL_UI_SUMMARY='' CKL_ACK_RECORD='' SELECTION_WORK='' TUI_SCANNING=0
     CKL_RESUME_PATH='' CKL_RESUME_SHA256='' CKL_RESUME_SECTION=''
@@ -242,7 +243,7 @@ parse_args() {
             --status|--dry-run|--diff|--apply|--list|--version|--changelog|--self-hash|--help)
                 set_mode "${flag#--}" || return ;;
             --explain|--rollback|--only|--skip|--ids-file|--config|--max-risk|--output-dir|\
-            --backup-dir|--format|--group-by|--resume|--change-ticket|--color|--ckl|--ckl-section|--ack-ckl-host)
+            --backup-dir|--format|--group-by|--resume|--color|--ckl|--ckl-section|--ack-ckl-host)
                 if (( $# == 0 )) || [[ -z $1 || $1 == --* ]]; then
                     usage_error "$flag needs a value"; return
                 fi
@@ -264,7 +265,6 @@ parse_args() {
                         if [[ $value != result ]]; then usage_error '--group-by expects result'; return; fi
                         REPORT_GROUP_BY=$value ;;
                     --resume) RESUME_ID=$value ;;
-                    --change-ticket) TICKET=$value ;;
                     --color) COLOR=$value ;;
                     --ckl)
                         if [[ -n $CKL_FILE ]]; then usage_error 'supply a single --ckl file'; return; fi
@@ -310,9 +310,6 @@ parse_args() {
     if [[ ! $FORMAT =~ ^(text|json|csv)$ || ! $COLOR =~ ^(auto|always|never)$ ||
           ! $MAX_RISK =~ ^(low|medium|high)$ ]]; then
         usage_error 'invalid format, color, or risk value'; return
-    fi
-    if [[ ${#TICKET} -gt 120 || $TICKET == *[^[:print:]]* ]]; then
-        usage_error 'change ticket must be printable ASCII and at most 120 bytes'; return
     fi
     if ! valid_state_path "$REPORT_BASE" || ! valid_state_path "$BACKUP_BASE"; then
         usage_error 'output and backup directories must be clean absolute paths'; return
@@ -466,7 +463,7 @@ report_metadata() {
     printf 'Script %s | SHA-256 %s\n' "$SCRIPT_VERSION" "$SCRIPT_HASH"
     printf 'Baseline %s | archive SHA-256 %s\n' "$BASELINE" "$ARCHIVE_SHA256"
     printf 'Host %s | RHEL 8.10 %s | %s | kernel %s\n' "$HOST_ID" "$ARCH" "$BOOT_MODE" "$KERNEL"
-    printf 'Operator %s | ticket %s\n' "$OPERATOR" "${TICKET:-none}"
+    printf 'Operator %s\n' "$OPERATOR"
     printf 'Scope %s | risk ceiling %s\n' "${SCOPE[*]}" "$MAX_RISK"
     if [[ $MODE == status ]]; then
         printf 'Fresh checks %s | reused results %s\n' "$STATUS_FRESH_COUNT" "$STATUS_REUSED_COUNT"
@@ -481,10 +478,10 @@ report_metadata() {
 report_json() {
     local id delimiter='' record_key record_value
     local -a keys=(run_id timestamp operator host_id script_version script_sha256 baseline
-        archive_sha256 mode os architecture boot_mode kernel change_ticket)
+        archive_sha256 mode os architecture boot_mode kernel)
     local -a values=("$RUN_ID" "$RUN_TIMESTAMP" "$OPERATOR" "$HOST_ID" "$SCRIPT_VERSION"
         "$SCRIPT_HASH" "$BASELINE" "$ARCHIVE_SHA256" "$MODE" 'RHEL 8.10' "$ARCH" "$BOOT_MODE"
-        "$KERNEL" "$TICKET")
+        "$KERNEL")
     local i
     printf '{'
     for i in "${!keys[@]}"; do
@@ -523,13 +520,13 @@ report_csv() {
     if [[ $MODE == diff ]]; then extra=(diff); fi
     if [[ $MODE == status ]]; then extra=(assessment_source assessment_observed_at); fi
     csv_row run_id timestamp operator host_id script_version script_sha256 baseline archive_sha256 \
-        mode os architecture boot_mode kernel change_ticket id title before assessment action evidence plan "${extra[@]}"
+        mode os architecture boot_mode kernel id title before assessment action evidence plan "${extra[@]}"
     for id in "${SCOPE[@]}"; do
         if [[ $MODE == diff ]]; then extra=("${DISPLAY_DIFF[$id]-}"); fi
         if [[ $MODE == status ]]; then extra=("${ASSESSMENT_SOURCE[$id]-}" "${ASSESSMENT_AT[$id]-}"); fi
         csv_row "$RUN_ID" "$RUN_TIMESTAMP" "$OPERATOR" "$HOST_ID" "$SCRIPT_VERSION" \
             "$SCRIPT_HASH" "$BASELINE" "$ARCHIVE_SHA256" "$MODE" 'RHEL 8.10' "$ARCH" "$BOOT_MODE" \
-            "$KERNEL" "$TICKET" "$id" "${TITLE[$id]}" "${BEFORE[$id]}" "${AFTER[$id]}" \
+            "$KERNEL" "$id" "${TITLE[$id]}" "${BEFORE[$id]}" "${AFTER[$id]}" \
             "${ACTIONS[$id]}" "${DETAIL[$id]}" "${DISPLAY_PLAN[$id]-}" "${extra[@]}"
     done
 }

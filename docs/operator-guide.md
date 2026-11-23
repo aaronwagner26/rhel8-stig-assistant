@@ -21,7 +21,7 @@ From the directory containing the verified script, launch Status with JSON repor
 
 ```bash
 ./rhel8-stig-urwid.sh --gui --status --format json \
-  --only V-230498,V-230279 --change-ticket LAB-READ-ONLY
+  --only V-230498,V-230279
 ```
 
 1. At **Run settings**, choose **Check** or press `F8` for readiness. **Browse** fills a CKL, saved selection, or site-file path into an editable field. `/` filters filenames and `Ctrl+L` enters a location.
@@ -29,7 +29,7 @@ From the directory containing the verified script, launch Status with JSON repor
 3. Open **Actions → Paste Vuln-IDs**, enter `V-230498, 230279, V-230498, V-999999`, and use `F2` for the preview. The final ID is an intentional unknown. The preview shows duplicate IDs and any matches outside the filter. **Add** and **Replace** are distinct decisions. **Undo last selection change** restores the earlier selection.
 4. Use `F5` for the full selected plan or `F6` for the focused finding. In the full plan, use **Finding index** to jump to evidence and before/after information. The summary includes selected IDs hidden by the current filter.
 5. Choose **Save report**, review the exact scope, and explicitly select **Save report** in the confirmation. **Back** is the default. A read-only run shows **Applied IDs (0)**.
-6. Open **Findings** in Results for per-ID evidence or **Reports → Change handoff summary** for a compact ticket update. In an artifact preview, use `/` to search and `n` or `N` for the next or previous match.
+6. Open **Findings** in Results for per-ID evidence or **Reports → Administrator actions** for prerequisites and activation steps. In an artifact preview, use `/` to search and `n` or `N` for the next or previous match.
 7. Choose **Follow-up → Run recheck** and then explicitly choose **Run Status**. This creates a separate Status report for the saved scope. With JSON for both runs, **Compare recheck** shows assessment and action differences. Press `F9` from Run settings or Findings to reopen Saved runs on a later launch.
 
 ## Scope, formats, and site inputs
