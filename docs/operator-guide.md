@@ -58,6 +58,14 @@ The assessment result, handling, operational risk, and action outcome answer dif
 - Saved-run comparison reads protected JSON reports with verified manifests for the same host fingerprint and benchmark. The interface shows differing scope and action-only changes explicitly.
 - `--resume RUN-ID` requires the executable build associated with the run. Use the Recovery and report views to inspect errors and backup references. `--rollback RUN-ID` is a separate preview and attended restoration workflow. Review what changed since the original operation first.
 
+### Automatic rechecks in Classic Status
+
+Run `./rhel8-stig.sh` as usual. The first assessment of a scope checks each finding live. Later runs can reuse a Pass or Not Applicable observation for 75 findings with verifiable dependencies. Open findings, checks that still require review or activation, and findings without verified inputs are checked live. For example, a Linux kernel parameter change invalidates the checks for affected inputs, and an audit policy change invalidates the findings that depend on that policy.
+
+The text report and Classic Findings screen show live and reused counts. A reused row in a report or the Details view identifies its original observation time. JSON and CSV include per-finding provenance. The per-user cache sits in the protected report directory, is scoped to the same host, boot and script build, and expires observations after 24 hours. A different host boot or program build starts a new live assessment.
+
+Run `./rhel8-stig.sh --fresh` or choose **Actions → Refresh** in Classic Findings for a live assessment of the current scope. `--status --resume`, Dry run, Diff, Apply, and Rollback also use live evidence. Apply and Rollback mark affected cached observations for recheck. The Urwid release continues to perform live scans.
+
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Clean assessment or informational command |

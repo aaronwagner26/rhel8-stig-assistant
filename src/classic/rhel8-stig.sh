@@ -1,6 +1,6 @@
 #!/bin/bash -p
 # rhel8-stig.sh — Attended DISA RHEL 8 assessment and remediation utility.
-# 0.5.5-dev | 2026-11-23 | Shared 164-rule coverage expansion.
+# 0.5.6-dev | 2026-11-23 | Verified incremental Classic Status.
 # Target: genuine RHEL 8.10 x86_64 with systemd. Boot behavior needs guest validation.
 # Baseline: DISA RHEL 8 STIG Version 2 Release 9 (Sunset, 2026-10-05).
 # Archive: U_RHEL_8_V2R9_STIG.zip
@@ -8,13 +8,17 @@
 #
 # 1. Metadata, compatibility, and change history
 
-readonly SCRIPT_VERSION=0.5.5-dev
+readonly SCRIPT_VERSION=0.5.6-dev
 readonly BASELINE='RHEL 8 STIG V2R9 (Sunset)'
 readonly ARCHIVE_SHA256=620bdff4d4a5b07b58817297dd5255a3f8f981a7227405c07b098588fe55cdee
 readonly ARCHIVE_URL=https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_RHEL_8_V2R9_STIG.zip
+readonly ASSESSMENT_CACHE_DEFAULT=1
 
 changelog() {
     cat <<'EOF'
+0.5.6-dev (2026-11-23)
+  Reuse verified unchanged results during Classic Status. Add --fresh and
+  report the checks performed live. Fix GRUB and GNOME AWK expressions.
 0.5.5-dev (2026-11-23)
   Expand the default coverage from 68 to 164 V2R9 rules. Add guarded
   password policy, audit, sysctl, SSH, metadata, and desktop plans.
@@ -101,6 +105,7 @@ Options for run modes:
                                  result. The default is Vuln-ID order.
   --resume RUN-ID                Reassess a previous run using its original scope.
                                  Use with --apply to request fresh attended changes.
+  --fresh                        Check every selected Status finding live.
   --change-ticket TEXT           Record a non-sensitive change reference.
   --color auto|always|never      Explicit choice wins. Auto honors NO_COLOR/TERM=dumb.
   --no-color                     Same as --color never.
@@ -136,7 +141,7 @@ EOF
 init_options() {
     MODE=status MODE_SET=0 SELECT_EXPLICIT=0 CONFIG_FILE='' RESUME_ID='' ROLLBACK_ID=''
     EXPLAIN_ID='' COLOR=auto FORMAT=text REPORT_GROUP_BY='' TICKET='' DEFER=0 VERBOSE=0 MAX_RISK=high
-    GUI=0 REVIEW_EACH=0 IMPLEMENT_DIFF=0 CKL_FILE='' CKL_PATH='' CKL_SHA256='' CKL_SECTION_OPT='' CKL_HOST_ACK=''
+    GUI=0 REVIEW_EACH=0 IMPLEMENT_DIFF=0 FORCE_FRESH=0 CKL_FILE='' CKL_PATH='' CKL_SHA256='' CKL_SECTION_OPT='' CKL_HOST_ACK=''
     CKL_UI_SUMMARY='' CKL_ACK_RECORD='' SELECTION_WORK='' TUI_SCANNING=0
     CKL_RESUME_PATH='' CKL_RESUME_SHA256='' CKL_RESUME_SECTION=''
     declare -gA CKL_MAPPED=() TUI_SELECTED=()
@@ -269,6 +274,7 @@ parse_args() {
                 esac ;;
             --gui|--tui) GUI=1; run_options=1 ;;
             --review-each) REVIEW_EACH=1; run_options=1 ;;
+            --fresh) FORCE_FRESH=1; run_options=1 ;;
             --no-color) COLOR=never; run_options=1 ;;
             --defer-service-actions) DEFER=1; run_options=1 ;;
             --verbose) VERBOSE=1; run_options=1 ;;
@@ -288,6 +294,9 @@ parse_args() {
     fi
     if (( REVIEW_EACH )) && [[ $MODE != apply ]]; then
         usage_error '--review-each requires --apply'; return
+    fi
+    if (( FORCE_FRESH )) && [[ $MODE != status ]]; then
+        usage_error '--fresh requires --status'; return
     fi
     if [[ $REPORT_GROUP_BY == result && $MODE != status && $MODE != dry-run && $MODE != diff ]]; then
         usage_error '--group-by result requires --status, --dry-run, or --diff'; return
@@ -459,6 +468,9 @@ report_metadata() {
     printf 'Host %s | RHEL 8.10 %s | %s | kernel %s\n' "$HOST_ID" "$ARCH" "$BOOT_MODE" "$KERNEL"
     printf 'Operator %s | ticket %s\n' "$OPERATOR" "${TICKET:-none}"
     printf 'Scope %s | risk ceiling %s\n' "${SCOPE[*]}" "$MAX_RISK"
+    if [[ $MODE == status ]]; then
+        printf 'Fresh checks %s | reused results %s\n' "$STATUS_FRESH_COUNT" "$STATUS_REUSED_COUNT"
+    fi
     if [[ -n ${CKL_PATH-} ]]; then printf '%s | see ckl-import.txt\n' "$CKL_UI_SUMMARY"; fi
     if (( ${#SKIPPED[@]} )); then printf 'Requested skip %s\n' "${!SKIPPED[*]}"; fi
     if [[ -n $RESUME_ID || -n $ROLLBACK_ID ]]; then
@@ -479,6 +491,9 @@ report_json() {
         record_key=${keys[i]} record_value=${values[i]}
         json_string "$record_key"; printf ':'; json_string "$record_value"; printf ','
     done
+    if [[ $MODE == status ]]; then
+        printf '"fresh_checks":%s,"reused_results":%s,' "$STATUS_FRESH_COUNT" "$STATUS_REUSED_COUNT"
+    fi
     printf '"results":['
     for id in "${SCOPE[@]}"; do
         printf '%s{"id":' "$delimiter"; json_string "$id"
@@ -490,6 +505,10 @@ report_json() {
         fi
         printf ',"action":'; json_string "${ACTIONS[$id]}"
         printf ',"evidence":'; json_string "${DETAIL[$id]}"
+        if [[ $MODE == status ]]; then
+            printf ',"assessment_source":'; json_string "${ASSESSMENT_SOURCE[$id]-}"
+            printf ',"assessment_observed_at":'; json_string "${ASSESSMENT_AT[$id]-}"
+        fi
         printf ',"plan":'; json_string "${DISPLAY_PLAN[$id]-}"
         if [[ $MODE == diff ]]; then printf ',"diff":'; json_string "${DISPLAY_DIFF[$id]-}"; fi
         printf '}'
@@ -502,10 +521,12 @@ report_csv() {
     local id
     local -a extra=()
     if [[ $MODE == diff ]]; then extra=(diff); fi
+    if [[ $MODE == status ]]; then extra=(assessment_source assessment_observed_at); fi
     csv_row run_id timestamp operator host_id script_version script_sha256 baseline archive_sha256 \
         mode os architecture boot_mode kernel change_ticket id title before assessment action evidence plan "${extra[@]}"
     for id in "${SCOPE[@]}"; do
         if [[ $MODE == diff ]]; then extra=("${DISPLAY_DIFF[$id]-}"); fi
+        if [[ $MODE == status ]]; then extra=("${ASSESSMENT_SOURCE[$id]-}" "${ASSESSMENT_AT[$id]-}"); fi
         csv_row "$RUN_ID" "$RUN_TIMESTAMP" "$OPERATOR" "$HOST_ID" "$SCRIPT_VERSION" \
             "$SCRIPT_HASH" "$BASELINE" "$ARCHIVE_SHA256" "$MODE" 'RHEL 8.10' "$ARCH" "$BOOT_MODE" \
             "$KERNEL" "$TICKET" "$id" "${TITLE[$id]}" "${BEFORE[$id]}" "${AFTER[$id]}" \
@@ -537,6 +558,9 @@ report_text_finding() {
     local id=$1
     printf '%-10s %-16s %-16s %-20s %s\n' "$id" "${BEFORE[$id]}" "${AFTER[$id]}" \
         "${ACTIONS[$id]}" "${DETAIL[$id]}" || return 1
+    if [[ $MODE == status && ${ASSESSMENT_SOURCE[$id]-} == reused ]]; then
+        printf '  Reused result | checked %s\n' "${ASSESSMENT_AT[$id]}" || return 1
+    fi
     if [[ ${DISPLAY_PLAN[$id]-} ]]; then printf '  %s\n' "${DISPLAY_PLAN[$id]}" || return 1; fi
     if [[ $MODE == diff && ${DISPLAY_DIFF[$id]-} && ${HANDLING[$id]-} != attended-action ]]; then
         printf '%s\n' "${DISPLAY_DIFF[$id]}" || return 1
@@ -8282,7 +8306,11 @@ rule_V_230234_check() {
                 n++; sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*$/, "");
                 if ($0 ~ /^grub\.pbkdf2\.sha512\.[^[:space:]]+$/) valid++
             }
-            END {print n == 1 && valid == 1 ? "present" : n > 1 ? "ambiguous" : "missing"}
+            END {
+                if (n > 1) print "ambiguous"
+                else if (n == 1 && valid == 1) print "present"
+                else print "missing"
+            }
         ' "$path") || { rule_result ERROR 'GRUB authentication file could not be parsed'; return; }
         case $state in
             present) rule_result PASS 'selected UEFI GRUB authentication file has one PBKDF2 SHA-512 entry' ;;
@@ -8915,7 +8943,11 @@ rule_V_230530_check() {
         active && /^[[:space:]]*logout[[:space:]]*=/ {
             n++; line=$0; sub(/^[^=]*=[[:space:]]*/, "",line); sub(/[[:space:]]*$/, "",line); if(line==empty) valid++
         }
-        END {print n==1 && valid==1 ? "present" : n>1 ? "ambiguous" : "missing"}
+        END {
+            if (n > 1) print "ambiguous"
+            else if (n == 1 && valid == 1) print "present"
+            else print "missing"
+        }
     ' "${files[@]}") || { rule_result ERROR 'GNOME local keyfile parse failed'; return; }
     case $result in
         present) rule_result NEEDS_REVIEW 'the GNOME local keyfile disables logout binding; confirm the loaded database and graphical session' ;;
@@ -12540,7 +12572,9 @@ tui_backend_refresh() {
     done
     : > "$RUN_DIR/run.log" || return 1
     init_results
+    status_cache_begin
     for id in "${SCOPE[@]}"; do assess_one "$id" || return 1; done
+    status_cache_finish && status_check_counts
 }
 
 tui_backend_import() {
@@ -12973,7 +13007,11 @@ tui_checklist() {
     if ! tui_size; then return 254; fi
     width=$(( TUI_COLS - 2 ))
     if (( width > 220 )); then width=220; fi
-    tui_shorten "Host ${HOST_NAME:-unknown} | ${MODE^^} | No changes made" "$(( width - 6 ))"
+    line="Host ${HOST_NAME:-unknown} | ${MODE^^} | No changes made"
+    if [[ $MODE == status ]]; then
+        line="STATUS | $STATUS_FRESH_COUNT checked live | $STATUS_REUSED_COUNT reused | Host ${HOST_NAME:-unknown}"
+    fi
+    tui_shorten "$line" "$(( width - 6 ))"
     prompt=$REPLY
     if [[ ${CKL_UI_SUMMARY-} ]]; then
         tui_line "$CKL_UI_SUMMARY"
@@ -13223,7 +13261,7 @@ tui_actions() {
                 ID 'Vulnerability ID' CAT 'Official CAT' Result 'Current result' Area 'Functional area'
             result=$?
             if (( result == 0 )); then TUI_SORT=$TUI_CHOICE; elif (( result == 2 )); then return 2; fi ;;
-        Refresh) tui_backend_refresh browse || return 2 ;;
+        Refresh) FORCE_FRESH=1 tui_backend_refresh browse || return 2 ;;
     esac
     return 0
 }
@@ -13318,6 +13356,9 @@ tui_details_text() {
     printf '%s | CAT %s | %s\n%s\n\n' "$id" "${CATEGORY[$id]}" "${REVISION[$id]}" "${TITLE[$id]}"
     if [[ ${CKL_UI_SUMMARY-} ]]; then printf 'Checklist status: Open at export\n'; fi
     printf 'Current assessment: %s\n' "$REPLY"
+    if [[ ${ASSESSMENT_SOURCE[$id]-} == reused ]]; then
+        printf 'Reused result | checked %s\n' "${ASSESSMENT_AT[$id]}"
+    fi
     tui_handling "$id"
     printf 'Handling: %s | Operational risk: %s\n' "$REPLY" "${PREVIEW_RISK[$id]:-${RISK[$id]}}"
     printf 'Evidence: %s\n\n' "${DETAIL[$id]-No local evidence recorded.}"
@@ -13713,6 +13754,8 @@ init_results() {
     declare -gA DISPLAY_DIFF=()
     declare -gA PLANNED_BY=() GROUPED_BY=()
     declare -gA PREVIEW_KEY=() PREVIEW_RISK=() PREVIEW_GROUP=()
+    declare -gA ASSESSMENT_SOURCE=() ASSESSMENT_AT=()
+    STATUS_OBSERVED='' CACHE_DIR='' STATUS_FRESH_COUNT=0 STATUS_REUSED_COUNT=0
     MUTATION_STOP=0 RUN_BLOCKED=0 RUN_ERROR=0
 }
 
@@ -13768,10 +13811,19 @@ assess_one() {
     if [[ ${SKIPPED[$id]+excluded} ]]; then
         BEFORE[$id]=UNKNOWN AFTER[$id]=UNKNOWN ACTIONS[$id]=SKIPPED
         DETAIL[$id]='excluded by --skip'
+        ASSESSMENT_SOURCE[$id]=skipped
         event INFO "$id excluded by scope"
         return
     fi
+    if status_cache_capture "$id" && status_cache_lookup "$id"; then
+        if [[ ${PLANNED_BY[$id]+planned} ]]; then
+            DISPLAY_PLAN[$id]="Included in the proposed ${PLANNED_BY[$id]} change."
+        fi
+        event INFO "$id reused evidence from ${ASSESSMENT_AT[$id]} after verifying unchanged inputs"
+        return
+    fi
     rule_dispatch "$id"
+    ASSESSMENT_SOURCE[$id]=live ASSESSMENT_AT[$id]=$STATUS_OBSERVED
     BEFORE[$id]=$ASSESSMENT AFTER[$id]=$ASSESSMENT DETAIL[$id]=$EVIDENCE ACTIONS[$id]=UNCHANGED
     event "$ASSESSMENT" "$id $EVIDENCE" || return 1
     if [[ $ASSESSMENT == ERROR ]]; then RUN_ERROR=1; fi
@@ -13955,6 +14007,7 @@ commit_reviewed_plan() {
     fi
     REVIEWED_GROUP=$PLAN_GROUP
     event INFO "$id $approval approval recorded for plan ${PLAN_KEY%% *}" || return 1
+    status_cache_forget "$id $REVIEWED_GROUP ${AFFECTED[$id]}"
     if "$PLAN_APPLIER" "$id" "$PLAN_SIGNATURE"; then
         ACTIONS[$id]=APPLIED AFTER[$id]=$ASSESSMENT DETAIL[$id]=$EVIDENCE
         if (( CHECK_PENDING )); then ACTIONS[$id]=PENDING_ACTIVATION; fi
@@ -14098,6 +14151,7 @@ do_rollback() {
         if (( MUTATION_STOP )) || ! allow_rule_plan "$id"; then
             ACTIONS[$id]=BLOCKED DETAIL[$id]+='; rollback blocked by interrupted or out-of-scope operation'; continue
         fi
+        status_cache_forget "$id ${AFFECTED[$id]}"
         "$rollback" "$id" "$old"
         result=$?
         case $result in
@@ -14133,6 +14187,7 @@ render_applied_ids() {
 finalize_run() {
     local id result_file=$RUN_DIR/summary.txt applied=0 blocked_count=0
     UNRESOLVED=0 PENDING_COUNT=0 SKIPPED_COUNT=0
+    status_check_counts
     for id in "${SCOPE[@]}"; do
         if [[ ${ACTIONS[$id]} == SKIPPED ]]; then (( SKIPPED_COUNT += 1 )); fi
         if [[ ! ${AFTER[$id]} =~ ^(PASS|NOT_APPLICABLE)$ ]]; then (( UNRESOLVED += 1 )); fi
@@ -14300,7 +14355,9 @@ main() {
         do_rollback "$previous" || return
     else
         if (( ! reviewed )); then
+            status_cache_begin
             for id in "${SCOPE[@]}"; do assess_one "$id" || return 70; done
+            status_cache_finish && status_check_counts || return 70
         fi
         verify_selection_source || return 69
         if [[ $MODE == apply && ${#SCOPE[@]} -gt 0 ]]; then do_apply || return 70; fi
@@ -16645,6 +16702,298 @@ rule_V_230531_plan() {
 
 rule_V_230531_admin() {
     printf '%s\n' 'Set CtrlAltDelBurstAction=none in the authoritative systemd Manager configuration, then arrange approved activation and verification.'
+}
+
+# Automatic Classic Status assessment cache.
+# Verified assessment reuse for read-only Status. Plans and approvals stay live.
+
+status_cache_begin() {
+    local clock
+    STATUS_OBSERVED='' CACHE_DIR='' CACHE_CONTEXT='' CACHE_NOW=''
+    declare -gA CACHE_INITIAL=() CACHE_CURRENT=() CACHE_PROBES=() CACHE_KEYS=()
+    [[ $MODE == status ]] || return 0
+    clock=$(date -u '+%s %FT%TZ') || return 0
+    read -r CACHE_NOW STATUS_OBSERVED <<< "$clock"
+    if (( ! ASSESSMENT_CACHE_DEFAULT )) || [[ -n $RESUME_ID ]]; then return 0; fi
+    [[ $CACHE_NOW =~ ^[0-9]{10}$ && $HOST_ID =~ ^[0-9a-f]{64}$ &&
+       $SCRIPT_HASH =~ ^[0-9a-f]{64}$ && $BOOT_ID =~ ^[0-9a-f-]{36}$ ]] || return 0
+    CACHE_CONTEXT=$(printf '%s\0' "$HOST_ID" "$SCRIPT_HASH" "$ARCHIVE_SHA256" "$BOOT_ID" "$EUID" \
+        "$MODPROBE_MANAGED" "$GPGCHECK_ALTERNATE_REPOS" | sha256sum) || return 0
+    CACHE_CONTEXT=${CACHE_CONTEXT%% *}
+    local directory=$REPORT_BASE/.assessment-cache
+    if secure_directory "$directory" 1 yes 2>/dev/null && local_filesystem "$directory"; then
+        CACHE_DIR=$directory
+    fi
+}
+
+status_cache_probe() {
+    local probe=$1 collection=$2 value
+    local -n fingerprints=$collection
+    if [[ ! ${fingerprints[$probe]+observed} ]]; then
+        value=$(cache_observe_source "$probe" 2>/dev/null) || value=unavailable
+        if [[ ! $value =~ ^[0-9a-f]{64}$ ]]; then value=unavailable; fi
+        fingerprints[$probe]=$value
+    fi
+    CACHE_PROBE_RESULT=${fingerprints[$probe]}
+}
+
+status_cache_capture() {
+    local id=$1 probes probe key
+    local -a parts=()
+    [[ ${CACHE_DIR-} ]] || return 1
+    probes=$(cache_probe_for "$id") || return 1
+    [[ $probes =~ ^[A-Za-z0-9_-]+(\ [A-Za-z0-9_-]+)*$ ]] || return 1
+    for probe in $probes; do
+        status_cache_probe "$probe" CACHE_INITIAL
+        [[ $CACHE_PROBE_RESULT != unavailable ]] || return 1
+        parts+=("$probe" "$CACHE_PROBE_RESULT")
+    done
+    key=$(printf '%s\0' "$CACHE_CONTEXT" "$id" "${REVISION[$id]}" "${parts[@]}" | sha256sum) || return 1
+    CACHE_KEYS[$id]=${key%% *}
+    CACHE_PROBES[$id]=$probes
+}
+
+status_cache_lookup() {
+    local id=$1 path attributes key observed_epoch observed_at outcome evidence extra
+    (( ! FORCE_FRESH )) && [[ ${CACHE_KEYS[$id]+captured} ]] || return 1
+    path=$CACHE_DIR/$id
+    [[ -f $path && ! -L $path ]] || return 1
+    attributes=$(stat -c '%u %a %h %s' -- "$path" 2>/dev/null) || return 1
+    [[ $attributes =~ ^$EUID\ 600\ 1\ ([1-9][0-9]{0,3})$ ]] && (( BASH_REMATCH[1] <= 4096 )) || return 1
+    {
+        IFS=$'\t' read -r key observed_epoch observed_at outcome evidence || return 1
+        if IFS= read -r extra || [[ $extra ]]; then return 1; fi
+    } 2>/dev/null < "$path"
+    [[ $key == "${CACHE_KEYS[$id]}" && $observed_epoch =~ ^[0-9]{10}$ &&
+        $observed_at =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ &&
+        $outcome =~ ^(PASS|NOT_APPLICABLE)$ && $evidence && $evidence != *[[:cntrl:]]* ]] || return 1
+    (( observed_epoch <= CACHE_NOW && CACHE_NOW - observed_epoch <= 86400 )) || return 1
+    BEFORE[$id]=$outcome AFTER[$id]=$outcome DETAIL[$id]=$evidence ACTIONS[$id]=UNCHANGED
+    ASSESSMENT_SOURCE[$id]=reused ASSESSMENT_AT[$id]=$observed_at
+    return 0
+}
+
+status_cache_write() {
+    local id=$1 temp evidence=${DETAIL[$1]}
+    [[ $evidence && $evidence != *[[:cntrl:]]* ]] && (( ${#evidence} <= 2048 )) || return 0
+    temp=$(mktemp -- "$CACHE_DIR/.pending.XXXXXXXX" 2>/dev/null) || return 0
+    if ! printf '%s\t%s\t%s\t%s\t%s\n' "${CACHE_KEYS[$id]}" "$CACHE_NOW" "$STATUS_OBSERVED" \
+        "${AFTER[$id]}" "$evidence" > "$temp" || ! mv -fT -- "$temp" "$CACHE_DIR/$id" 2>/dev/null; then
+        rm -f -- "$temp" 2>/dev/null || true
+    fi
+    return 0
+}
+
+status_cache_finish() {
+    [[ $CACHE_DIR ]] || return 0
+    local id probe consistent
+    for id in "${SCOPE[@]}"; do
+        [[ ${CACHE_KEYS[$id]+captured} ]] || continue
+        consistent=1
+        for probe in ${CACHE_PROBES[$id]}; do
+            status_cache_probe "$probe" CACHE_CURRENT
+            if [[ $CACHE_PROBE_RESULT != "${CACHE_INITIAL[$probe]}" ]]; then consistent=0; break; fi
+        done
+        if (( ! consistent )) && [[ ${ASSESSMENT_SOURCE[$id]-} == reused ]]; then
+            event INFO "$id inputs changed during verification. Running a live check." || return 1
+            CACHE_DIR='' assess_one "$id" || return 1
+        fi
+        if [[ ${ASSESSMENT_SOURCE[$id]-} == live ]]; then
+            if (( consistent )) && [[ ${ACTIONS[$id]} == UNCHANGED && ${AFTER[$id]} =~ ^(PASS|NOT_APPLICABLE)$ ]]; then
+                status_cache_write "$id"
+            else
+                rm -f -- "$CACHE_DIR/$id" 2>/dev/null || true
+            fi
+        fi
+    done
+}
+
+status_check_counts() {
+    local id
+    STATUS_FRESH_COUNT=0 STATUS_REUSED_COUNT=0
+    if [[ $MODE != status ]]; then return 0; fi
+    for id in "${SCOPE[@]}"; do
+        case ${ASSESSMENT_SOURCE[$id]-} in
+            live) (( STATUS_FRESH_COUNT += 1 )) ;;
+            reused) (( STATUS_REUSED_COUNT += 1 )) ;;
+        esac
+    done
+    return 0
+}
+
+status_cache_forget() {
+    (( ASSESSMENT_CACHE_DEFAULT )) || return 0
+    local id directory=$REPORT_BASE/.assessment-cache
+    [[ -d $directory ]] && secure_directory "$directory" 0 yes 2>/dev/null &&
+        local_filesystem "$directory" || return 0
+    local -a affected_ids=()
+    IFS=' ' read -r -a affected_ids <<< "$1"
+    for id in "${affected_ids[@]}"; do
+        known_id "$id" || continue
+        rm -f -- "$directory/$id" 2>/dev/null || true
+    done
+}
+
+# Read-only dependency observations for the automatic status cache.
+# An unproven dependency leaves the finding on the fresh assessment path.
+
+cache_probe_for() {
+    local id=$1
+    case $id in
+        V-230227) printf '%s\n' console-notice ;;
+        V-230233|V-230324|V-230365|V-230366|V-230378|V-230383)
+            printf '%s\n' account-defaults ;;
+        V-230245|V-230246|V-230247) printf '%s\n' messages-file ;;
+        V-230248|V-230250) printf '%s\n' messages-directory ;;
+        V-230396|V-230397|V-230398) printf '%s\n' audit-log-file ;;
+        V-230399|V-230400|V-230401) printf '%s\n' audit-log-directory ;;
+        V-230472|V-230474) printf '%s\n' audit-tool-metadata ;;
+        V-274877|V-288831) printf '%s\n' audit-rules ;;
+        *)
+            if network_sysctl_spec "$id" >/dev/null; then
+                printf 'sysctl-policy sysctl-live-%s\n' "$id"
+            elif expansion_audit_spec "$id" >/dev/null; then
+                printf 'audit-rules audit-watch-%s\n' "$id"
+            else
+                return 1
+            fi
+            ;;
+    esac
+}
+
+cache_hash_fields() {
+    local digest
+    digest=$(printf '%s\0' "$@" | sha256sum) || return 1
+    digest=${digest%% *}
+    [[ $digest =~ ^[0-9a-f]{64}$ ]] || return 1
+    printf '%s\n' "$digest"
+}
+
+# Metadata is enough for ownership and mode checks. It does not unnecessarily
+# read log contents or fingerprint the timestamps of routine log writes.
+cache_probe_metadata() {
+    local path=$1 kind=$2 canonical data
+    [[ ! -L $path ]] || return 1
+    case $kind in
+        file) [[ -f $path ]] || return 1 ;;
+        directory) [[ -d $path ]] || return 1 ;;
+        *) return 1 ;;
+    esac
+    canonical=$(realpath -e -- "$path") || return 1
+    [[ $canonical == "$path" ]] || return 1
+    data=$(stat -c '%d:%i:%u:%g:%a:%F' -- "$path") || return 1
+    [[ -n $data ]] || return 1
+    cache_hash_fields "$path" "$kind" "$data"
+}
+
+# A text file is read only when its type, size and access are known. The
+# pre/post identity includes nanosecond ctime to reject a change during the read.
+cache_text_file_state() {
+    local path=$1 max=$2 resolved before after size digest
+    [[ -f $path && -r $path && ! -L $path ]] || return 1
+    resolved=$(realpath -e -- "$path") || return 1
+    [[ $resolved == "$path" ]] || return 1
+    before=$(stat -c '%s %d:%i:%u:%g:%a:%h:%y:%z' -- "$path") || return 1
+    size=${before%% *}
+    [[ $size =~ ^(0|[1-9][0-9]{0,7})$ ]] && (( size <= max )) || return 1
+    digest=$(sha256_file "$path") || return 1
+    after=$(stat -c '%s %d:%i:%u:%g:%a:%h:%y:%z' -- "$path") || return 1
+    [[ $before == "$after" && ! -L $path ]] || return 1
+    cache_hash_fields "$path" "$before" "$digest"
+}
+
+cache_audit_rules_state() {
+    local enabled loader inventory stored active generated
+    have_tools auditctl systemctl awk realpath stat findmnt || return 1
+    enabled=$(expansion_audit_kernel_status) || return 1
+    [[ $enabled == 1 || $enabled == 2 ]] || return 1
+    loader=$(expansion_audit_loader) || return 1
+    inventory=$(audit_rule_source_inventory) || return 1
+    stored=$(audit_rule_source_contents <<< "$inventory") || return 1
+    generated=$(expansion_audit_generated_rules) || return 1
+    active=$(active_audit_rules) || return 1
+    (( ${#active} <= 1048576 )) || return 1
+    cache_hash_fields "$enabled" "$loader" "$inventory" "$stored" "$generated" "$active"
+}
+
+cache_audit_watch_state() {
+    local id=$1 spec kind path key
+    spec=$(expansion_audit_spec "$id") || return 1
+    read -r kind path key <<< "$spec"
+    [[ -n $key ]] && expansion_audit_watched_object "$kind" "$path" || return 1
+    if [[ $path == /etc/sudoers.d ]]; then
+        cache_probe_metadata "$path" directory
+    else
+        cache_probe_metadata "$path" file
+    fi
+}
+
+cache_sysctl_state() {
+    local id=$1 spec key target value ipv6=active
+    spec=$(network_sysctl_spec "$id") || return 1
+    read -r key target <<< "$spec"
+    [[ -n $target ]] || return 1
+    if [[ $key == net.ipv6.* ]] && network_sysctl_ipv6_disabled; then
+        ipv6=disabled value=unneeded
+    else
+        value=$(network_sysctl_live "$key") || return 1
+    fi
+    cache_hash_fields "$key" "$ipv6" "$value"
+}
+
+cache_probe_audit_log() {
+    local kind=$1 path config metadata
+    path=$(audit_log_object "$kind") || return 1
+    config=$(cache_text_file_state /etc/audit/auditd.conf 1048576) || return 1
+    metadata=$(cache_probe_metadata "$path" "$kind") || return 1
+    cache_hash_fields "$config" "$metadata"
+}
+
+cache_probe_audit_tools() {
+    local output path observed
+    local -a values=()
+    output=$(expansion_audit_tool_paths) || return 1
+    while IFS= read -r path; do
+        observed=$(cache_probe_metadata "$path" file) || return 1
+        values+=("$observed")
+    done <<< "$output"
+    cache_hash_fields "${values[@]}"
+}
+
+cache_login_defaults_state() {
+    local defaults interpreter runtime_identifier python_identity
+    network_sysctl_protected_path /etc || return 1
+    defaults=$(cache_text_file_state /etc/login.defs 131072) || return 1
+    interpreter=$(realpath -e -- /usr/libexec/platform-python) && [[ -x $interpreter ]] || return 1
+    runtime_identifier=$(cache_probe_metadata "$interpreter" file) || return 1
+    python_identity=$(repo_platform_python -I -c 'import configparser, ctypes, hashlib, pathlib, re, stat, sys; print(sys.version)') || return 1
+    [[ -n $python_identity ]] || return 1
+    cache_hash_fields "$defaults" "$runtime_identifier" "$python_identity"
+}
+
+cache_observe_source() {
+    local digest
+    # Suppress native-probe diagnostics when a fresh check will report them.
+    {
+        case "$1" in
+            console-notice) cache_text_file_state /etc/issue 131072 ;;
+            account-defaults) cache_login_defaults_state ;;
+            messages-file) cache_probe_metadata /var/log/messages file ;;
+            messages-directory) cache_probe_metadata /var/log directory ;;
+            audit-log-file) cache_probe_audit_log file ;;
+            audit-log-directory) cache_probe_audit_log directory ;;
+            audit-tool-metadata) cache_probe_audit_tools ;;
+            audit-rules) cache_audit_rules_state ;;
+            audit-watch-*) cache_audit_watch_state "${1#audit-watch-}" ;;
+            sysctl-policy)
+                digest=$(network_sysctl_scan cache-observation.invalid 0 '') || return 1
+                digest=${digest##* }
+                [[ $digest =~ ^[0-9a-f]{64}$ ]] || return 1
+                printf '%s\n' "$digest" ;;
+            sysctl-live-*) cache_sysctl_state "${1#sysctl-live-}" ;;
+            *) return 1 ;;
+        esac
+    } 2>/dev/null
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then

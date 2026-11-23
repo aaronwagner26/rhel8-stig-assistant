@@ -8,9 +8,9 @@ import re
 ROOT = Path(__file__).resolve().parent.parent
 URWID_SOURCE = ROOT / "src" / "urwid"
 BACKEND = ROOT / "src" / "classic" / "rhel8-stig.sh"
-BACKEND_SHA256 = "c173ebec78a64644d8af0b3700a77d7e5573081c5815f9b0b30a9c4883d4cf57"
-CLASSIC_VERSION = "0.5.5-dev"
-VERSION = "0.6.4-urwid-dev"
+BACKEND_SHA256 = "5eada3181356e55ef7a0cbeecc450dda7c179878cdd2ea902648f44f9f461a69"
+CLASSIC_VERSION = "0.5.6-dev"
+VERSION = "0.6.5-urwid-dev"
 OUTPUT = ROOT / "dist" / "rhel8-stig-urwid.sh"
 CLASSIC_OUTPUT = OUTPUT.with_name(BACKEND.name)
 DELIMITER = "__RHEL_STIG_EMBEDDED_URWID__"
@@ -67,12 +67,16 @@ def build():
     shell = keep_shared_tui_helpers(baseline.decode("utf-8"))
     shell = replace_once(shell, "# rhel8-stig.sh — Attended",
                          "# rhel8-stig-urwid.sh — Attended")
-    shell = replace_once(shell, "# {} | 2026-11-23 | Shared 164-rule coverage expansion.".format(CLASSIC_VERSION),
-                         "# {} | 2026-11-23 | Urwid workbench with 164 shared rules.".format(VERSION))
+    shell = replace_once(shell, "# {} | 2026-11-23 | Verified incremental Classic Status.".format(CLASSIC_VERSION),
+                         "# {} | 2026-11-23 | Urwid workbench and assessment parser fixes.".format(VERSION))
     shell = replace_once(shell, "readonly SCRIPT_VERSION=" + CLASSIC_VERSION,
                          "readonly SCRIPT_VERSION=" + VERSION)
+    shell = replace_once(shell, "readonly ASSESSMENT_CACHE_DEFAULT=1",
+                         "readonly ASSESSMENT_CACHE_DEFAULT=0")
     classic_heading = CLASSIC_VERSION + " (2026-11-23)"
     shell = replace_once(shell, classic_heading, VERSION + """ (2026-11-23)
+  Fix GNU awk parsing for UEFI GRUB password and GNOME logout checks.
+0.6.4-urwid-dev (2026-11-23)
   Extend the shared catalog with 96 additional attended remediation paths.
   Show the same checks, previews and activation requirements in both editions.
 0.6.3-urwid-dev (2026-11-20)
@@ -193,16 +197,20 @@ a controlling terminal. With no explicit selection source it starts unchecked.""
                          "        tui_seed_scope || return 70")
     shell = replace_once(shell, """    : > "$RUN_DIR/run.log" || return 1
     init_results
-    for id in "${SCOPE[@]}"; do assess_one "$id" || return 1; done""",
+    status_cache_begin
+    for id in "${SCOPE[@]}"; do assess_one "$id" || return 1; done
+    status_cache_finish && status_check_counts""",
                          """    : > "$RUN_DIR/run.log" || return 1
     init_results
+    status_cache_begin
     local position=0
     urwid_progress 0 "${#SCOPE[@]}" '' || return 1
     for id in "${SCOPE[@]}"; do
         urwid_progress "$position" "${#SCOPE[@]}" "$id" || return 1
         assess_one "$id" || return 1
         position=$(( position + 1 ))
-    done""")
+    done
+    status_cache_finish && status_check_counts""")
     shell = replace_once(shell, """            show_apply_item "$id" "$position" "$total" |
                 display_terminal_text "$TTY_FD" >&"$TTY_FD" || return 1
             apply_choice "$id" "$PLAN_RISK" "$allow_all" "$revised"

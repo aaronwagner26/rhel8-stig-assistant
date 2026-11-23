@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.5-urwid-dev and 0.5.6-dev
+
+- Reuse eligible observations automatically when running Classic Status. Show live and reused counts and the original observation date. `--fresh` forces a live Status assessment.
+- Recheck changed dependencies, open and pending findings, and checks without proven reusable inputs.
+- Fix GNU awk syntax in the UEFI GRUB password and GNOME logout checks, including in the Classic GUI.
+
 ## 0.6.4-urwid-dev and 0.5.5-dev
 
 - Add 96 rules from the pinned DISA RHEL 8 V2R9 benchmark. Urwid and Classic share 164 of the 371 IDs.
