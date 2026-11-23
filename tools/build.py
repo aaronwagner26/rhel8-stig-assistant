@@ -8,9 +8,9 @@ import re
 ROOT = Path(__file__).resolve().parent.parent
 URWID_SOURCE = ROOT / "src" / "urwid"
 BACKEND = ROOT / "src" / "classic" / "rhel8-stig.sh"
-BACKEND_SHA256 = "735e6b404818ec2c15218d838137d595a6bf9321f844a7b1c4aeac073321c100"
-CLASSIC_VERSION = "0.5.9-dev"
-VERSION = "0.6.9-urwid-dev"
+BACKEND_SHA256 = "26d0f7633b4fc34ee62835ab664f019195849e006bd2ec0115e4215691439846"
+CLASSIC_VERSION = "0.5.10-dev"
+VERSION = "0.6.10-urwid-dev"
 OUTPUT = ROOT / "dist" / "rhel8-stig-urwid.sh"
 CLASSIC_OUTPUT = OUTPUT.with_name(BACKEND.name)
 DELIMITER = "__RHEL_STIG_EMBEDDED_URWID__"
@@ -67,14 +67,17 @@ def build():
     shell = keep_shared_tui_helpers(baseline.decode("utf-8"))
     shell = replace_once(shell, "# rhel8-stig.sh — Attended",
                          "# rhel8-stig-urwid.sh — Attended")
-    shell = replace_once(shell, "# {} | 2026-11-23 | Guided resolution for selected findings.".format(CLASSIC_VERSION),
-                         "# {} | 2026-11-23 | Resolve findings from the workbench.".format(VERSION))
+    shell = replace_once(shell, "# {} | 2026-11-23 | One review for shared SSH policy staging.".format(CLASSIC_VERSION),
+                         "# {} | 2026-11-23 | One approval for the shared SSH policy plan.".format(VERSION))
     shell = replace_once(shell, "readonly SCRIPT_VERSION=" + CLASSIC_VERSION,
                          "readonly SCRIPT_VERSION=" + VERSION)
     shell = replace_once(shell, "readonly ASSESSMENT_CACHE_DEFAULT=1",
                          "readonly ASSESSMENT_CACHE_DEFAULT=0")
     classic_heading = CLASSIC_VERSION + " (2026-11-23)"
     shell = replace_once(shell, classic_heading, VERSION + """ (2026-11-23)
+  Bring the related SSH findings and their before/after diff into one approval
+  for the verified shared operation. Show OpenSSL impact in the same review.
+0.6.9-urwid-dev (2026-11-23)
   Open guided resolution from Findings and batch review. Capture site input
   and evidence references, and present the explicit OpenSSL scope decision.
 0.6.8-urwid-dev (2026-11-23)

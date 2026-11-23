@@ -15,8 +15,6 @@ TIME_FIELD = {"key": "approved-time-source", "label": "Approved time source",
               "prompt": "Enter the authoritative source approved for this host.", "value": ""}
 NOTE_FIELD = {"key": "evidence-note", "label": "Record evidence",
               "prompt": "Enter your evidence reference.", "value": ""}
-DEPENDENCY = {"id": RELATED, "title": "OpenSSL cryptographic policy",
-              "reason": "This proposal affects the host-wide cryptographic policy."}
 
 
 def row(finding, selected=True):
@@ -47,13 +45,11 @@ class ResolutionWorkbenchTests(unittest.TestCase):
         frame = frame or self.ui.base_frame
         return [entry for entry, _ in frame.footer.contents[0][0].contents]
 
-    def resolution(self, finding, inputs=(), dependency=None):
+    def resolution(self, finding, inputs=()):
         event = dict(type="resolution", id=finding, title="Synthetic policy",
                      text="OBSERVED EVIDENCE\nThe source is missing.\n\n"
                           "VERIFICATION\nCheck persistent configuration and live state.",
                      inputs=list(inputs))
-        if dependency:
-            event["dependency"] = dependency
         self.ui.handle_event(event)
 
     def test_details_routes_to_resolution_and_back_preserves_page(self):
@@ -69,31 +65,34 @@ class ResolutionWorkbenchTests(unittest.TestCase):
         self.assertEqual(self.ui.selected, {TIME, SSH})
         self.assertEqual(self.commands, [("detail", TIME), ("resolve", TIME)])
 
-    def test_scope_addition_uses_reviewed_ids_and_requires_confirmation(self):
-        reviewed = [row(SSH), row(INTEGRITY)]
-        self.ui.handle_event(dict(type="review", rows=reviewed, focused="", text="Synthetic preview",
-                                  token="plan-token"))
+    def test_shared_ssh_review_displays_related_findings_and_starts_one_approval(self):
+        leader = "V-230251"
+        self.ui.focus_id = SSH
+        self.ui.rows[SSH]["ssh_shared"] = True
+        self.ui.open_actions()
+        self.assertIn("Review SSH change for " + SSH, self.screen())
+        self.ui.close_modal()
+        self.ui.review_focused()
+        reviewed = [dict(row(leader, selected=False), scope_added=True, operation=True),
+                    dict(row(SSH), linked=leader),
+                    dict(row(RELATED, selected=False), scope_added=True)]
+        self.ui.handle_event(dict(type="review", rows=reviewed, focused=SSH, text="Synthetic preview",
+                                  token="plan-token", ssh_single=True))
+        self.assertIn("Related findings included automatically", self.screen())
+        self.assertIn(leader, self.screen())
+        self.assertIn(RELATED, self.screen())
         self.ui.open_review_index(False)
         self.ui.show_review_item(reviewed[0])
         self.press_button(self.footer_buttons(), "Resolve")
-        self.resolution(SSH, dependency=DEPENDENCY)
-
-        def open_scope_confirmation():
-            self.press_button(self.ui.base_frame.body.body, "Review required " + RELATED)
-
-        open_scope_confirmation()
-        self.assertIn("affects the host-wide cryptographic policy", self.screen())
-        self.ui.widget.keypress(SCREEN, "enter")
-        self.assertEqual(self.commands, [("resolve", SSH)])
-        open_scope_confirmation()
-        self.ui.widget.keypress(SCREEN, "shift tab")
-        self.ui.widget.keypress(SCREEN, "enter")
-        self.assertEqual(self.commands[-1], ("resolve-scope", SSH, RELATED, INTEGRITY + "," + SSH))
-        self.ui.handle_event(dict(type="state", context=CONTEXT,
-                                  rows=reviewed + [row(RELATED)], reset_selection=True))
-        self.assertEqual(self.ui.page, "findings")
-        self.assertIsNone(self.ui.review)
-        self.assertEqual(self.ui.selected, {INTEGRITY, SSH, RELATED})
+        self.resolution(leader, [NOTE_FIELD])
+        self.assertEqual(self.ui.resolution_selection(), SSH)
+        self.ui.close_resolution()
+        self.ui.return_to_review_index()
+        self.ui.close_review_index()
+        self.press_button(self.footer_buttons(), "Start approval")
+        self.assertIsNone(self.ui.modal)
+        self.assertEqual(self.commands, [("review", SSH, SSH), ("resolve", leader), ("accept", "plan-token")])
+        self.assertEqual(self.ui.selected, {TIME, SSH})
 
     def test_input_preserves_entered_value_after_backend_error(self):
         self.ui.open_resolution(TIME)

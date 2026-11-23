@@ -1,6 +1,6 @@
 #!/bin/bash -p
 # rhel8-stig.sh — Attended DISA RHEL 8 assessment and remediation utility.
-# 0.5.9-dev | 2026-11-23 | Guided resolution for selected findings.
+# 0.5.10-dev | 2026-11-23 | One review for shared SSH policy staging.
 # Target: genuine RHEL 8.10 x86_64 with systemd. Boot behavior needs guest validation.
 # Baseline: DISA RHEL 8 STIG Version 2 Release 9 (Sunset, 2026-10-05).
 # Archive: U_RHEL_8_V2R9_STIG.zip
@@ -8,7 +8,7 @@
 #
 # 1. Metadata, compatibility, and change history
 
-readonly SCRIPT_VERSION=0.5.9-dev
+readonly SCRIPT_VERSION=0.5.10-dev
 readonly BASELINE='RHEL 8 STIG V2R9 (Sunset)'
 readonly ARCHIVE_SHA256=620bdff4d4a5b07b58817297dd5255a3f8f981a7227405c07b098588fe55cdee
 readonly ARCHIVE_URL=https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_RHEL_8_V2R9_STIG.zip
@@ -16,6 +16,9 @@ readonly ASSESSMENT_CACHE_DEFAULT=1
 
 changelog() {
     cat <<'EOF'
+0.5.10-dev (2026-11-23)
+  Start the shared SSH crypto-policy review from any of its four findings.
+  Show all affected IDs and the exact policy diff before one approval.
 0.5.9-dev (2026-11-23)
   Guide resolution for 22 findings. Collect approved time sources and
   evidence references, and review the OpenSSL dependency when required.
@@ -153,8 +156,8 @@ init_options() {
     GUI=0 REVIEW_EACH=0 IMPLEMENT_DIFF=0 FORCE_FRESH=0 CKL_FILE='' CKL_PATH='' CKL_SHA256='' CKL_SECTION_OPT='' CKL_HOST_ACK=''
     CKL_UI_SUMMARY='' CKL_ACK_RECORD='' SELECTION_WORK='' TUI_SCANNING=0
     CKL_RESUME_PATH='' CKL_RESUME_SHA256='' CKL_RESUME_SECTION=''
-    CHRONY_RUN_SERVER=''
-    declare -gA RESOLUTION_NOTES=()
+    CHRONY_RUN_SERVER='' SSH_IMPACT_ONLY=0
+    declare -gA RESOLUTION_NOTES=() SSH_SCOPE_ADDED=()
     declare -gA CKL_MAPPED=() TUI_SELECTED=()
     declare -ga TUI_IDS=()
     REPORT_BASE="/var/tmp/rhel8-stig-$EUID" BACKUP_BASE=/var/lib/rhel8-stig/backups
@@ -842,6 +845,7 @@ write_manifest() {
         fi
         for id in "${SCOPE[@]}"; do
             if [[ ${SKIPPED[$id]+excluded} ]]; then printf 'skip\t%s\n' "$id"
+            elif [[ $id == V-288829 && ${SSH_SCOPE_ADDED[$id]+included} ]]; then printf 'ssh_impact\t%s\n' "$id"
             else printf 'select\t%s\n' "$id"; fi
         done
     } > "$1"
@@ -850,7 +854,7 @@ write_manifest() {
 load_manifest() {
     local file=$1 run=$2 key value rest
     local host='' script='' archive='' schema='' manifest_run='' boot=''
-    local ckl_path='' ckl_sha256='' ckl_section=''
+    local ckl_path='' ckl_sha256='' ckl_section='' ssh_impact=0
     local -A selections=() exclusions=() seen=()
     text_input_file "$file" || return 1
     while IFS=$'\t' read -r key value rest; do
@@ -866,10 +870,14 @@ load_manifest() {
                     schema) schema=$value ;; run) manifest_run=$value ;; host) host=$value ;;
                     boot) boot=$value ;; script) script=$value ;; archive) archive=$value ;;
                 esac ;;
-            select|skip)
+            select|skip|ssh_impact)
                 known_id "$value" && [[ ! ${selections[$value]+selected} ]] || return 1
                 selections[$value]=1
-                if [[ $key == skip ]]; then exclusions[$value]=1; fi ;;
+                if [[ $key == skip ]]; then exclusions[$value]=1
+                elif [[ $key == ssh_impact ]]; then
+                    [[ $value == V-288829 ]] || return 1
+                    ssh_impact=1
+                fi ;;
             *) return 1 ;;
         esac
     done < "$file"
@@ -887,7 +895,7 @@ load_manifest() {
     REQUESTED=() SKIPPED=()
     for value in "${!selections[@]}"; do REQUESTED[$value]=1; done
     for value in "${!exclusions[@]}"; do SKIPPED[$value]=1; done
-    PRIOR_BOOT=$boot
+    PRIOR_BOOT=$boot SSH_IMPACT_ONLY=$ssh_impact
 }
 
 open_attended_terminal() {
@@ -1329,7 +1337,7 @@ edit_metadata() {
 # An exact zero-context diff is limited to recognized setting lines. Shared
 # configuration sources can contain credentials, comments and site details.
 edit_public_diff() {
-    local i=$1 path=${EDIT_PATHS[$1]} original id public_additions=''
+    local i=$1 path=${EDIT_PATHS[$1]} original id public_additions='' public_removals=''
     if [[ ${EDIT_KINDS[i]} == metadata ]]; then
         printf -- '--- before %s\n+++ after %s\n- mode %s, group %s\n+ mode %s, group %s\n' \
             "$path" "$path" "${EDIT_OLD_MODE[i]}" "${EDIT_OLD_GROUP[i]}" "${EDIT_MODE[i]}" "${EDIT_GROUP[i]}"
@@ -1349,21 +1357,32 @@ edit_public_diff() {
                 expansion_audit_validate_dropin:*) public_additions=$(expansion_audit_payload "V-$id") || public_additions='' ;;
             esac
         fi
+        if [[ $path == "/etc/crypto-policies/policies/modules/$ATTENDED_SSH_MODULE.pmod" &&
+              ${EDIT_VALIDATOR[i]} == attended_crypto_module_validate ]]; then
+            public_additions=$(attended_ssh_module) || return 1
+        fi
+    fi
+    if [[ $path == /etc/crypto-policies/config && ${EDIT_VALIDATOR[i]} == attended_crypto_config_validate ]]; then
+        public_additions=$(printf '%s\n' "FIPS:$ATTENDED_SSH_MODULE" \
+            '# rhel8-stig original policy: DEFAULT' '# rhel8-stig original policy: FIPS') || return 1
+        public_removals=$'DEFAULT\nFIPS'
     fi
     {
         local status=0
         diff -U0 --label "before $path" --label "after $path" -- "$original" "$EDIT_TEMP/edit-$i" || status=$?
         (( status < 2 ))
-    } | awk -v public_additions="$public_additions" '
+    } | awk -v public_additions="$public_additions" -v public_removals="$public_removals" '
         BEGIN {
             n=split(public_additions, additions, /\n/)
-            for (i=1; i<=n; i++) public_line[additions[i]]=1
+            for (i=1; i<=n; i++) public_add[additions[i]]=1
+            n=split(public_removals, removals, /\n/)
+            for (i=1; i<=n; i++) public_remove[removals[i]]=1
         }
         (NR <= 2 && /^(--- before |\+\+\+ after )/) ||
           /^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@$/ {print; next}
         /^[+-]/ {
             mark=substr($0,1,1); v=substr($0,2)
-            if ((mark == "+" && (v in public_line)) ||
+            if ((mark == "+" && (v in public_add)) || (mark == "-" && (v in public_remove)) ||
                 v ~ /^[[:space:]]*(umask[[:space:]]+[0-7]{1,4}|(PermitRootLogin|GSSAPIAuthentication|PermitEmptyPasswords|PermitUserEnvironment|X11Forwarding|StrictModes|IgnoreRhosts|CREATE_HOME)[[:space:]]+(yes|no)|gpgcheck[[:space:]]*=[[:space:]]*[01]|idle-delay[[:space:]]*=[[:space:]]*uint32[[:space:]]+[0-9]+|disable-user-list[[:space:]]*=[[:space:]]*(true|false)|logout[[:space:]]*=[[:space:]]*\047\047|StopIdleSessionSec[[:space:]]*=[[:space:]]*[0-9]+)[[:space:]]*$/ ||
                 v ~ /^[[:space:]]*(ClientAliveCountMax|ClientAliveInterval|PASS_(MIN|MAX|WARN)_DAYS)[[:space:]]+[0-9]+[[:space:]]*$/ ||
                 v ~ /^[[:space:]]*(fs\.protected_(hardlinks|symlinks)|kernel\.(dmesg_restrict|perf_event_paranoid|randomize_va_space|kptr_restrict)|net\.ipv[46]\.conf\.(all|default)\.(accept_redirects|accept_source_route|send_redirects|log_martians)|net\.ipv4\.icmp_echo_ignore_broadcasts)[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]*$/ ||
@@ -1428,7 +1447,7 @@ file_plan() {
         printf '%s\n' 'Recovery: restore the recorded original only while the resulting state still matches.') || return 1
     record=$(clean_text "$PLAN_TEXT") || return 1
     PLAN_TEXT=$record
-    if plan_diff_requested; then
+    if plan_diff_requested || { [[ $MODE == apply ]] && attended_ssh_id "$id"; }; then
         PLAN_DIFF=$(for i in "${!EDIT_PATHS[@]}"; do edit_public_diff "$i" || exit 1; done) || return 1
     fi
 }
@@ -11420,6 +11439,62 @@ attended_crypto_config_value() {
     ' "$1"
 }
 
+attended_ssh_id() {
+    case $1 in
+        V-230251|V-230252|V-272482|V-272483) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+attended_ssh_base() {
+    local dir=/etc/crypto-policies base active
+    attended_policy_source "$dir/config" && attended_policy_source "$dir/state/current" &&
+        base=$(attended_crypto_config_value "$dir/config") &&
+        active=$(attended_crypto_config_value "$dir/state/current") &&
+        [[ $base == "$active" && $base =~ ^(DEFAULT|FIPS)$ ]] || return 1
+    printf '%s\n' "$base"
+}
+
+# Expand only a catalog preview for an SSH finding that actually needs a plan.
+# An inferred OpenSSL row records impact and keeps rollback scope complete.
+include_ssh_scope() {
+    local base id companion missing=0 wants_plan=0
+    SSH_SCOPE_ADDED=()
+    if (( SSH_IMPACT_ONLY )) && [[ ${EFFECTIVE[V-288829]+included} ]]; then
+        SSH_SCOPE_ADDED[V-288829]=impact
+    fi
+    [[ $MODE =~ ^(apply|dry-run|diff)$ && $MAX_RISK == high &&
+       ! ${CKL_PATH-} && ! ${RESUME_ID-} ]] || return 0
+    for id in $ATTENDED_SSH_SCOPE; do
+        if [[ ${EFFECTIVE[$id]+selected} ]]; then
+            rule_dispatch "$id"
+            if check_supports_plan "$id"; then wants_plan=1; break; fi
+        fi
+    done
+    (( wants_plan )) || return 0
+    base=$(attended_ssh_base) || return 0
+    companion=$ATTENDED_SSH_SCOPE
+    if [[ $base == DEFAULT ]]; then companion+=' V-288829'; fi
+    for id in $companion; do
+        [[ ! ${SKIPPED[$id]+excluded} ]] || return 0
+        if [[ ! ${EFFECTIVE[$id]+selected} ]]; then missing=1; fi
+    done
+    (( missing )) || return 0
+    for id in $companion; do
+        [[ ! ${EFFECTIVE[$id]+selected} ]] || continue
+        SCOPE+=("$id")
+        EFFECTIVE[$id]=1 SSH_SCOPE_ADDED[$id]=shared
+        if [[ $id == V-288829 ]]; then SSH_SCOPE_ADDED[$id]=impact; fi
+    done
+    mapfile -t SCOPE < <(printf '%s\n' "${SCOPE[@]}" | LC_ALL=C sort -u)
+}
+
+ssh_single_review() {
+    local id
+    (( ${#PREVIEW_KEY[@]} == 1 )) || return 1
+    for id in "${!PREVIEW_KEY[@]}"; do attended_ssh_id "$id"; done
+}
+
 attended_crypto_pending() {
     local dir=/etc/crypto-policies module state
     module="$dir/policies/modules/$ATTENDED_SSH_MODULE.pmod"
@@ -11516,7 +11591,7 @@ attended_crypto_module_validate() {
 
 attended_ssh_plan() {
     local id=$1 dir=/etc/crypto-policies stock=/usr/share/crypto-policies
-    local config module base active versions client_digest server_digest path
+    local config module base versions client_digest server_digest path
     local scratch="$EDIT_TEMP/crypto-proof"
     config="$dir/config"
     module="$dir/policies/modules/$ATTENDED_SSH_MODULE.pmod"
@@ -11524,9 +11599,7 @@ attended_ssh_plan() {
        [[ ! -x /usr/libexec/platform-python ]] || ! versions=$(attended_crypto_packages); then
         edit_fail 'verified Red Hat crypto-policies packages and platform Python are required'; return
     fi
-    if ! attended_policy_source "$config" || ! attended_policy_source "$dir/state/current" ||
-       ! base=$(attended_crypto_config_value "$config") || ! active=$(attended_crypto_config_value "$dir/state/current") ||
-       [[ $base != "$active" || ! $base =~ ^(DEFAULT|FIPS)$ ]]; then
+    if ! base=$(attended_ssh_base); then
         edit_fail 'a stock DEFAULT or FIPS policy with matching applied state is required'; return
     fi
     if ! edit_safe_path "$module" || [[ -e $module || -L $module ||
@@ -11568,7 +11641,10 @@ attended_ssh_plan() {
         EDIT_CONTEXT+=" $(sha256_file /etc/sysconfig/sshd)" || return 1
     fi
     EDIT_DISPOSITION=pending
-    EDIT_REQUIREMENTS='Confirm control of the host crypto policy, the package approval and the recovery console. DEFAULT to FIPS changes generated defaults for consumers including OpenSSL, GnuTLS, NSS, Java, Kerberos, IKE and libssh. Review dependent services and clients before activation.'
+    EDIT_REQUIREMENTS='Approve the shared change only if you control the host crypto policy and have recovery console access. Review dependent services and clients before activation.'
+    if [[ $base == DEFAULT ]]; then
+        EDIT_REQUIREMENTS+=' DEFAULT to FIPS changes generated defaults for consumers including OpenSSL, GnuTLS, NSS, Java, Kerberos, IKE and libssh.'
+    fi
     EDIT_ACTIVATION="Before a restart or package-triggered regeneration, conduct the approved maintenance review. Run update-crypto-policies --no-reload, validate both SSH allowlists, and confirm fresh client and server sessions after a separately approved restart. A FIPS-based crypto policy alone does not establish kernel FIPS mode or module certification. Before activation the file rollback restores the inputs. After activation regenerate the restored policy and recover affected services separately."
     edit_content "$module" 0644 'Add an OpenSSH-scoped module that limits both SSH backends to the four approved ciphers and four approved MAC names.' \
         attended_crypto_module_validate < "$scratch/policies/modules/$ATTENDED_SSH_MODULE.pmod" || return
@@ -12760,6 +12836,7 @@ tui_backend_refresh() {
         SCOPE+=("$id")
         EFFECTIVE[$id]=1
     done
+    include_ssh_scope
     : > "$RUN_DIR/run.log" || return 1
     init_results
     status_cache_begin
@@ -13488,7 +13565,6 @@ tui_resolution() {
     result=$?
     if (( result == 1 )); then return 0; elif (( result )); then return 2; fi
     if [[ $id == V-230484 ]]; then choices+=(Source 'Enter a site-approved chrony source'); fi
-    if resolution_dependency_available "$id"; then choices+=(Scope 'Add V-288829 to the reviewed scope'); fi
     tui_choose "Resolve | $id" 'Choose an action or return to Findings.' "${choices[@]}"
     result=$?
     if (( result == 1 )); then return 0; elif (( result )); then return 2; fi
@@ -13515,12 +13591,6 @@ tui_resolution() {
             previous=$CHRONY_RUN_SERVER
             CHRONY_RUN_SERVER=$value
             if ! tui_backend_refresh browse; then CHRONY_RUN_SERVER=$previous; return 2; fi ;;
-        Scope)
-            tui_confirm 'Include V-288829' 'The SSH crypto-policy change also affects OpenSSL. Include V-288829 for a new review?' Include Back
-            result=$?
-            if (( result == 2 )); then return 2; elif (( result )); then return 0; fi
-            resolution_enroll_openssl
-            tui_backend_refresh browse || return 2 ;;
     esac
 }
 
@@ -13634,14 +13704,15 @@ tui_details() {
 }
 
 tui_implement_preview() {
-    local id=$1 width=72 proposal=${DISPLAY_PLAN[$1]-} delta=${DISPLAY_DIFF[$1]-} risk label
+    local id=$1 width=72 owner=${PLANNED_BY[$1]:-$1} proposal delta risk label
+    proposal=${DISPLAY_PLAN[$owner]-} delta=${DISPLAY_DIFF[$owner]-}
     if [[ -n ${TUI_FD-} ]] && tui_size; then
         width=$(( TUI_COLS - 8 ))
         if (( width > 112 )); then width=112; fi
     fi
-    risk=${PREVIEW_RISK[$id]:-${RISK[$id]}}
+    risk=${PREVIEW_RISK[$owner]:-${RISK[$id]}}
     label=${ACTIONS[$id]}
-    if [[ ${PREVIEW_KEY[$id]+planned} ]]; then label=PROPOSED; fi
+    if [[ ${PREVIEW_KEY[$owner]+planned} ]]; then label=PROPOSED; fi
     printf '%s  |  CAT %s  |  %s RISK\n' "$id" "${CATEGORY[$id]}" "${risk^^}" || return 1
     printf '%s\n' "${TITLE[$id]}" | fold -s -w "$width" || return 1
     printf '\nPress G to jump to the diff.\n\nASSESSMENT\n----------\n%s  |  %s\n' \
@@ -13658,15 +13729,17 @@ tui_implement_preview() {
         proposal=$REPLY
     fi
     printf '\nIMPLEMENTATION PLAN\n-------------------\n' || return 1
+    if [[ $owner != "$id" ]]; then printf 'Shared operation led by %s\n' "$owner" || return 1; fi
+    render_ssh_scope_additions || return 1
     printf '%s\n' "$proposal" | fold -s -w "$width" || return 1
-    if [[ ${PREVIEW_KEY[$id]+planned} ]]; then
-        printf '\nContinue to the attended approval.\n' || return 1
+    if [[ ${PREVIEW_KEY[$owner]+planned} ]]; then
+        printf '\nReview the diff, then start the attended approval.\n' || return 1
     fi
 
     printf '\nBEFORE / AFTER\n--------------\n' || return 1
     if [[ $delta ]]; then
         printf '%s\n\n%s\n' '- Current    + Proposed' "$delta"
-    elif [[ ${PREVIEW_KEY[$id]+planned} ]]; then
+    elif [[ ${PREVIEW_KEY[$owner]+planned} ]]; then
         printf '%s\n' 'The implementation plan above describes the reviewed change.'
     else
         printf '%s\n' 'No proposed changes for this finding.'
@@ -13676,7 +13749,7 @@ tui_implement_preview() {
 tui_highlighted_view() {
     local title=$1 exit_label=$2 screen_type=$3 result
     if (( ${TUI_COLOR:-0} )) && have_tools python3; then
-        tui_color_view "$title" "$screen_type"
+        tui_color_view "$title" "$screen_type" "$exit_label"
         result=$?
         case $result in
             0|1) return "$result" ;;
@@ -13691,7 +13764,7 @@ tui_color_view() {
     # Load the embedded program from stdin, then use the already-open terminal
     # for curses input. Only sanitized preview or results text is rendered.
     env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C TERM="$TUI_TERM" ESCDELAY=200 \
-        python3 -I - "$TUI_TEMP/view.txt" "$1" "$2" \
+        python3 -I - "$TUI_TEMP/view.txt" "$1" "$2" "${3:-Continue}" \
         3<&"$TUI_FD" >&"$TUI_FD" 2>&"$TUI_FD" <<'PY'
 import os
 import sys
@@ -13753,7 +13826,7 @@ def styled_lines(lines, results, heading, removed, added, attention):
         yield line.expandtabs(4), color
 
 
-def review(screen, title, lines, results):
+def review(screen, title, lines, results, action):
     if not curses.has_colors() or curses.COLOR_PAIRS < 5 or curses.COLORS < 8:
         return 3
     background = -1
@@ -13772,7 +13845,7 @@ def review(screen, title, lines, results):
     at_end = False
     last_width = 0
     focused = 0
-    buttons = ("Close",) if results else ("Continue", "Back")
+    buttons = ("Close",) if results else (action, "Back")
     while True:
         height, cols = screen.getmaxyx()
         width = max(1, cols - 2)
@@ -13840,7 +13913,7 @@ except curses.error:
 except (OSError, UnicodeError):
     sys.exit(2)
 try:
-    sys.exit(curses.wrapper(review, sys.argv[2], lines, sys.argv[3] == "results"))
+    sys.exit(curses.wrapper(review, sys.argv[2], lines, sys.argv[3] == "results", sys.argv[4]))
 except KeyboardInterrupt:
     sys.exit(1)
 except curses.error:
@@ -13849,7 +13922,7 @@ PY
 }
 
 tui_review() {
-    local focused=${1-} result prompt action=Continue title='Review | complete selected scope'
+    local focused=${1-} result prompt action=Continue shared_ssh=0 title='Review | complete selected scope'
     local IMPLEMENT_DIFF=0
     if (( ! ${#TUI_SELECTED[@]} )); then
         tui_message Review 'No findings are selected. Choose findings and open Review again.' || return 2
@@ -13857,17 +13930,20 @@ tui_review() {
     fi
     if [[ $focused || $MODE == apply ]]; then IMPLEMENT_DIFF=1; fi
     tui_backend_refresh review || return 2
+    if [[ $MODE == apply ]] && ssh_single_review; then shared_ssh=1; fi
     if [[ $focused ]]; then
-        [[ ${#SCOPE[@]} == 1 && ${SCOPE[0]} == "$focused" ]] || return 2
+        [[ ${EFFECTIVE[$focused]+selected} ]] || return 2
         title="Implement | $focused"
+        if (( shared_ssh )); then action='Start approval'; fi
         tui_implement_preview "$focused" | tr -d '\000-\010\013-\037\177-\377' > "$TUI_TEMP/view.txt" ||
             return 2
-        tui_highlighted_view "$title" Continue preview
+        tui_highlighted_view "$title" "$action" preview
         result=$?
     else
         if [[ $MODE == apply ]]; then
             title='Implement selected findings'
-            if (( ${#PREVIEW_KEY[@]} )); then action='Start approvals'; else action='Save report'; fi
+            if (( shared_ssh )); then action='Start approval'
+            elif (( ${#PREVIEW_KEY[@]} )); then action='Start approvals'; else action='Save report'; fi
         fi
         {
             if [[ $MODE == apply ]]; then render_apply_inventory || return 2; fi
@@ -13877,6 +13953,7 @@ tui_review() {
         result=$?
     fi
     if (( result == 0 )); then
+        if (( shared_ssh )); then return 0; fi
         if [[ $focused ]]; then
             prompt="Continue with $focused only?"$'\n''Any proposed change still needs attended approval.'
         elif [[ $MODE == apply ]]; then
@@ -14086,6 +14163,11 @@ assess_one() {
         DISPLAY_PLAN[$id]="Included in the proposed ${PLANNED_BY[$id]} change."
         return 0
     fi
+    if [[ $id == V-288829 && ${SSH_SCOPE_ADDED[$id]+included} ]]; then
+        DISPLAY_PLAN[$id]='Included for the OpenSSL impact of the shared SSH crypto-policy change. This run proposes no separate OpenSSL configuration edit.'
+        if [[ $ASSESSMENT =~ ^(FAIL|NEEDS_REVIEW|UNKNOWN)$ ]]; then ACTIONS[$id]=MANUAL_REQUIRED; fi
+        return 0
+    fi
     if (( CHECK_PENDING )); then ACTIONS[$id]=PENDING_ACTIVATION; return 0; fi
     if [[ $ASSESSMENT =~ ^(PASS|NOT_APPLICABLE|ERROR)$ ]]; then return 0; fi
     if ! check_supports_plan "$id"; then
@@ -14116,15 +14198,31 @@ render_apply_finding() {
     printf '\n'
 }
 
+render_ssh_scope_additions() {
+    local id
+    local -a shared=()
+    for id in "${SCOPE[@]}"; do
+        if [[ ${SSH_SCOPE_ADDED[$id]-} == shared ]]; then shared+=("$id"); fi
+    done
+    if (( ${#shared[@]} )); then
+        printf 'Included for the shared SSH operation: %s\n' "${shared[*]}" || return 1
+    fi
+    if [[ ${SSH_SCOPE_ADDED[V-288829]-} == impact ]]; then
+        printf '%s\n' 'V-288829 is included for the OpenSSL impact only.' || return 1
+    fi
+    return 0
+}
+
 render_apply_inventory() {
     local id group offset
-    local -a groups=('Proposed changes' 'Included in another change' 'Manual work or evidence' \
+    local -a groups=('Proposed changes' 'Included in another change' 'Shared OpenSSL impact' 'Manual work or evidence' \
         'Blocked' 'Pending activation' 'Already compliant' 'Not applicable' 'Skipped' 'Check errors')
     local -a ids=()
     local -A members=()
     for id in "${SCOPE[@]}"; do
         if [[ ${PREVIEW_KEY[$id]+planned} ]]; then group='Proposed changes'
         elif [[ ${PLANNED_BY[$id]+grouped} ]]; then group='Included in another change'
+        elif [[ ${SSH_SCOPE_ADDED[$id]-} == impact ]]; then group='Shared OpenSSL impact'
         else
             case ${ACTIONS[$id]}:${AFTER[$id]} in
                 BLOCKED:*) group='Blocked' ;;
@@ -14157,6 +14255,7 @@ render_apply_preview() {
     if [[ $MODE != apply ]]; then title='Full review preview'; fi
     printf '\n%s\n%s selected | %s operations | %s without a separate operation\n' \
         "$title" "${#SCOPE[@]}" "$operations" "$(( ${#SCOPE[@]} - operations ))" || return 1
+    render_ssh_scope_additions || return 1
     if [[ $MODE == apply ]]; then
         printf 'Approval at preview: %s low risk | %s individual (medium or high risk)\n\n' \
             "$low_risk" "$(( operations - low_risk ))" || return 1
@@ -14616,8 +14715,9 @@ main() {
         if (( reviewed )) && [[ $MODE == apply ]] && ! lock_mutation; then
             blocked 'host mutation lock could not be acquired'; return
         fi
-    elif ! resolve_scope; then
-        usage_error 'the selected scope is empty'; return
+    else
+        if ! resolve_scope; then usage_error 'the selected scope is empty'; return; fi
+        include_ssh_scope
     fi
     verify_selection_source || return 69
     if ! create_run || ! record_digest "$RUN_DIR/manifest"; then
@@ -17331,21 +17431,6 @@ resolution_text() {
     return 0
 }
 
-resolution_dependency_available() {
-    local id=$1
-    case $id in V-230251|V-230252|V-272482|V-272483) ;; *) return 1 ;; esac
-    [[ $MODE == apply && ! ${CKL_PATH-} && ! ${RESUME_ID-} &&
-       ! ${SKIPPED[V-288829]+skipped} &&
-       ${DISPLAY_PLAN[$id]-} == 'shared effect would change skipped or unselected V-288829' ]]
-}
-
-resolution_enroll_openssl() {
-    local -a ordered=()
-    mapfile -t ordered < <(printf '%s\n' "${TUI_IDS[@]}" V-288829 | LC_ALL=C sort -u)
-    TUI_IDS=("${ordered[@]}")
-    REQUESTED[V-288829]=1 TUI_ALLOWED[V-288829]=1 TUI_SELECTED[V-288829]=1
-}
-
 # Per-finding resolution guidance for the 22-item reviewed scope.
 rule_resolution_guidance() {
     local id=${1-} method prerequisites decision verification subject
@@ -17358,7 +17443,7 @@ rule_resolution_guidance() {
                 V-272483) subject='SSH client ciphers' ;;
             esac
             method="Stage the required $subject with the shared client/server crypto-policy operation."
-            prerequisites='Select V-230251, V-230252, V-272482 and V-272483 together. Stock DEFAULT additionally requires V-288829 explicitly in scope for the OpenSSL impact. Configured and active policy must agree on supported stock DEFAULT or FIPS with unchanged OpenSSH backends. Local overrides and alternate profiles require review.'
+            prerequisites='Select any of the four SSH findings in a catalog apply or preview. The tool includes the related SSH findings and discloses the V-288829 OpenSSL impact for stock DEFAULT. It honors explicit skips and keeps checklist and resumed scope fixed. Configured and active policy must agree on stock DEFAULT or FIPS with verified OpenSSH backends.'
             decision='Confirm ownership of the crypto policy, compatibility for affected clients and services, and console recovery. A transition from DEFAULT affects non-SSH consumers as well.'
             verification='After approved policy regeneration and service activation, verify the effective client and server allowlists and test new SSH connections.'
             ;;

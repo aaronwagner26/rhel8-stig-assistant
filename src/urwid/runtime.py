@@ -54,19 +54,18 @@ def decode_workbench_event(frame):
         for row in event["rows"]:
             finding = row.get("id") if isinstance(row, dict) else None
             if (not isinstance(finding, str) or not finding or finding in findings
-                    or any(not isinstance(row.get(field, ""), str) for field in ("result", "outcome"))):
+                    or any(not isinstance(row.get(field, ""), str) for field in ("result", "outcome"))
+                    or any(type(row.get(field, False)) is not bool for field in ("scope_added", "ssh_shared"))):
                 raise ValueError("The workbench received an invalid finding row.")
             findings.add(finding)
+    if kind == "review" and type(event.get("ssh_single", False)) is not bool:
+        raise ValueError("The workbench received an invalid SSH approval indicator.")
     if kind == "progress" and not 0 <= event["complete"] <= event["count"]:
         raise ValueError("The workbench received an invalid progress count.")
     if kind == "resolution":
-        dependency = event.get("dependency")
         if any(not isinstance(item, dict) or any(not isinstance(item.get(key), str)
                    for key in ("key", "label", "prompt", "value")) for item in event["inputs"]):
             raise ValueError("The workbench received an invalid resolution input.")
-        if dependency is not None and (not isinstance(dependency, dict) or any(
-                not isinstance(dependency.get(key), str) for key in ("id", "title", "reason"))):
-            raise ValueError("The workbench received an invalid resolution dependency.")
     if kind == "modal" and (event["kind"] not in ("confirm", "choice", "input", "message")
                             or any(not isinstance(choice, dict) or not isinstance(choice.get("id"), str)
                                    or not isinstance(choice.get("label"), str) for choice in event["choices"])):

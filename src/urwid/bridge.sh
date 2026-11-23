@@ -140,27 +140,33 @@ urwid_event() {
 }
 
 urwid_rows() {
-    local id result handling area action status ready selected separate linked history
+    local phase=${1:-browse} id result handling area action status ready selected separate linked history
+    local scope_added ssh_shared
     local spacer=''
     printf '['
     for id in "${SCOPE[@]}"; do
+        if [[ $phase == browse && ! ${TUI_ALLOWED[$id]+allowed} ]]; then continue; fi
         tui_assessment "$id"; result=$REPLY
         tui_handling "$id"; handling=$REPLY
         tui_area "$id"; area=$REPLY
         tui_action_summary "$id"; action=$REPLY
         status=${ACTIONS[$id]-UNCHANGED}
         ready=false selected=false separate=false linked=${PLANNED_BY[$id]-} history=''
+        scope_added=false ssh_shared=false
         if [[ ${CKL_PATH-} ]]; then history=${CKL_HISTORY[$id]-}; fi
         if [[ ${PREVIEW_KEY[$id]+planned} ]]; then separate=true; ready=true; fi
         if [[ $linked ]]; then ready=true; fi
         if [[ ${TUI_SELECTED[$id]+selected} ]]; then selected=true; fi
+        if [[ ${SSH_SCOPE_ADDED[$id]+added} ]]; then scope_added=true; fi
+        if attended_ssh_id "$id"; then ssh_shared=true; fi
         printf '%s{' "$spacer"
         urwid_json_fields id "$id" title "${TITLE[$id]}" cat "${CATEGORY[$id]}" \
             risk "${PREVIEW_RISK[$id]:-${RISK[$id]}}" result "$result" handling "$handling" area "$area" \
             evidence "${DETAIL[$id]-}" action "$action" outcome "$status" \
             plan "${DISPLAY_PLAN[$id]-}" diff "${DISPLAY_DIFF[$id]-}" linked "$linked" \
             ckl_status "$history"
-        printf ',"ready":%s,"selected":%s,"operation":%s}' "$ready" "$selected" "$separate"
+        printf ',"ready":%s,"selected":%s,"operation":%s,"scope_added":%s,"ssh_shared":%s}' \
+            "$ready" "$selected" "$separate" "$scope_added" "$ssh_shared"
         spacer=,
     done
     printf ']'
@@ -212,7 +218,7 @@ urwid_browse() {
 # Review uses the transaction engine's live result maps. Keep the earlier
 # browse results available for navigation and subsequent Details requests.
 readonly -a URWID_BROWSE_FIELDS=(EFFECTIVE TUI_SELECTED BEFORE AFTER ACTIONS DETAIL DISPLAY_PLAN DISPLAY_DIFF
-    PLANNED_BY GROUPED_BY PREVIEW_KEY PREVIEW_RISK PREVIEW_GROUP ASSESSMENT_SOURCE ASSESSMENT_AT)
+    PLANNED_BY GROUPED_BY PREVIEW_KEY PREVIEW_RISK PREVIEW_GROUP ASSESSMENT_SOURCE ASSESSMENT_AT SSH_SCOPE_ADDED)
 
 urwid_hold_browse() {
     if (( ${#URWID_BROWSE_SCOPE[@]} )); then return 0; fi
@@ -371,18 +377,23 @@ urwid_allowed_id() {
     known_id "$1" && [[ ${TUI_ALLOWED[$1]+allowed} ]]
 }
 
+urwid_assessed_id() {
+    known_id "$1" && [[ ${AFTER[$1]+assessed} && ( ${TUI_ALLOWED[$1]+allowed} || ${SSH_SCOPE_ADDED[$1]+related} ) ]]
+}
+
 urwid_review_token() {
     local id
     {
         printf '%s\0' "$SCRIPT_HASH" "$CKL_SHA256" "$MODE" "$MAX_RISK" "$DEFER" "$URWID_REVIEW_SEQ"
         for id in "${SCOPE[@]}"; do
-            printf '%s\0' "$id" "${PREVIEW_KEY[$id]-}" "${AFTER[$id]-}" "${DISPLAY_PLAN[$id]-}"
+            printf '%s\0' "$id" "${PREVIEW_KEY[$id]-}" "${AFTER[$id]-}" "${DISPLAY_PLAN[$id]-}" \
+                "${SSH_SCOPE_ADDED[$id]-}"
         done
     } | sha256sum
 }
 
 urwid_send_review() {
-    local csv=$1 focused=$2 review
+    local csv=$1 focused=$2 review ssh_single=false
     local IMPLEMENT_DIFF=1
     if ! urwid_site_snapshot_matches; then
         urwid_event error 'The site configuration changed. Press F7 for Run settings, then rebuild the preview.'
@@ -413,8 +424,9 @@ urwid_send_review() {
     fi
     printf '{'
     urwid_json_fields type review token "$URWID_REVIEW_TOKEN" focused "$focused" text "$review"
-    printf ',"rows":'
-    urwid_rows
+    if [[ $MODE == apply ]] && ssh_single_review; then ssh_single=true; fi
+    printf ',"ssh_single":%s,"rows":' "$ssh_single"
+    urwid_rows review
     printf '}\n'
 }
 
@@ -439,7 +451,7 @@ urwid_resolution_field() {
 
 urwid_send_resolution() {
     local id=$1 body
-    if ! urwid_allowed_id "$id" || [[ ! ${AFTER[$id]+assessed} ]]; then
+    if ! urwid_assessed_id "$id"; then
         urwid_event error 'Assess this finding within the available scope before opening Resolve.'
         return
     fi
@@ -460,19 +472,11 @@ urwid_send_resolution() {
         fi
     fi
     printf ']'
-    if resolution_dependency_available "$id"; then
-        printf ',"dependency":{'
-        urwid_json_fields id V-288829 title "${TITLE[V-288829]}" reason \
-            'The proposed SSH crypto-policy change also affects OpenSSL. Add this finding only if you want to review that broader change. A new preview and approvals will follow.'
-        printf '}'
-    fi
     printf '}\n'
 }
 
-urwid_resolution_reassess() {
-    local kind=$1 value=$2 csv=$3 previous_server=${CHRONY_RUN_SERVER-}
-    local allowed=${TUI_ALLOWED[V-288829]+yes} requested=${REQUESTED[V-288829]+yes}
-    local -a previous_ids=("${TUI_IDS[@]}")
+urwid_reassess_time_source() {
+    local value=$1 csv=$2 previous_server=${CHRONY_RUN_SERVER-}
     if ! urwid_site_snapshot_matches || ! verify_selection_source; then
         urwid_event error 'The site configuration or checklist changed. Recheck the source before proceeding.'
         return
@@ -489,15 +493,11 @@ urwid_resolution_reassess() {
     else
         TUI_SELECTED=()
     fi
-    if [[ $kind == source ]]; then CHRONY_RUN_SERVER=$value
-    else resolution_enroll_openssl; fi
+    CHRONY_RUN_SERVER=$value
     if ! tui_backend_refresh browse; then
         CHRONY_RUN_SERVER=$previous_server
-        TUI_IDS=("${previous_ids[@]}")
-        if [[ ! $allowed ]]; then unset 'TUI_ALLOWED[V-288829]'; fi
-        if [[ ! $requested ]]; then unset 'REQUESTED[V-288829]'; fi
         urwid_restore_browse
-        urwid_event error 'Reassessment could not finish. The previous settings and scope were restored.'
+        urwid_event error 'Reassessment could not finish. The previous time source and selection were restored.'
         return
     fi
     URWID_BROWSE_SCOPE=() URWID_BROWSE_DATA=()
@@ -506,7 +506,7 @@ urwid_resolution_reassess() {
 
 urwid_resolution_input() {
     local id=$1 key=$2 value=$3 csv=$4
-    if ! urwid_allowed_id "$id" || [[ ! ${AFTER[$id]+assessed} ]]; then
+    if ! urwid_assessed_id "$id"; then
         urwid_event error 'Choose an assessed finding in the current view.'
         return
     fi
@@ -516,21 +516,12 @@ urwid_resolution_input() {
             else urwid_event error 'Use at most 512 bytes and omit control characters.'; fi ;;
         approved-time-source)
             if [[ $id == V-230484 ]] && chrony_valid_approved_server "$value"; then
-                urwid_resolution_reassess source "$value" "$csv"
+                urwid_reassess_time_source "$value" "$csv"
             else
                 urwid_event error 'Use a valid site-approved DNS hostname or IPv4 address for V-230484.'
             fi ;;
         *) urwid_event error 'This finding has no input with that name.' ;;
     esac
-}
-
-urwid_resolution_scope() {
-    local id=$1 target=$2 csv=$3
-    if [[ $target != V-288829 ]] || ! urwid_allowed_id "$id" || ! resolution_dependency_available "$id"; then
-        urwid_event error 'This preview does not offer that scope change. Review the finding again.'
-        return
-    fi
-    urwid_resolution_reassess scope '' "$csv"
 }
 
 urwid_prepare_scope() {
@@ -727,7 +718,6 @@ urwid_dispatch() {
     case $command:$# in
         resolve:1) urwid_send_resolution "$1"; return ;;
         resolve-input:4) urwid_resolution_input "$@"; return ;;
-        resolve-scope:3) urwid_resolution_scope "$@"; return ;;
     esac
     if [[ $command != accept && $command != detail ]]; then URWID_REVIEW_TOKEN=''; fi
     if [[ $command != accept && $command != review ]]; then urwid_restore_browse; fi

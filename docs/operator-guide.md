@@ -58,7 +58,13 @@ The assessment result, handling, operational risk, and action outcome answer dif
 
 In Urwid, open **Resolve** from a finding’s Details or from its entry in the batch **Finding index**. In Classic, highlight a supported finding and choose **Actions → Resolve**. The panel shows the current observation and any exact blocking prerequisite, then describes the guarded fix, administrator decision, and verification. Enter a non-sensitive evidence reference if you have one, and save the run with that finding selected to keep the reference in **Administrator actions**.
 
-For V-230484, enter an approved DNS hostname or IPv4 address in Resolve or pass `--approved-time-source HOST` for the run. To use a protected site configuration, set `CHRONY_APPROVED_SERVER=HOST`. Reassess and review any resulting proposal. An existing source, managed configuration, or unresolved activation can require additional work. For the shared SSH change, Resolve offers an explicit scope extension only when the preview reports that V-288829 is required and the selection permits expansion. [All 22 findings](resolution-guide.md)
+For V-230484, enter an approved DNS hostname or IPv4 address in Resolve or pass `--approved-time-source HOST` for the run. To use a protected site configuration, set `CHRONY_APPROVED_SERVER=HOST`. Reassess and review any resulting proposal. An existing source, managed configuration, or unresolved activation can require additional work. [All 22 findings](resolution-guide.md)
+
+### Review the shared SSH policy
+
+Select any of V-230251, V-230252, V-272482 or V-272483 for Apply. In a catalog run, the preview includes the required companion findings for stock DEFAULT or FIPS. When DEFAULT changes to FIPS, the preview records the impact on OpenSSL (V-288829) alongside the SSH change. Select V-288829 directly if you also want its separate OpenSSL configuration fix assessed for Apply. The tool respects `--skip`, the risk ceiling, and fixed CKL or resume scopes.
+
+When the shared SSH plan is the only proposed change, **Start approval** opens its individual decision. The preview shows the crypto-policy module and the config diff. A changed plan requires a fresh decision. After approval and staging, the report gives the separate activation, connection checks, and recovery steps.
 
 ## Reports, rechecks, and recovery
 

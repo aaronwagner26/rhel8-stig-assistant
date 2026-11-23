@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.10-urwid-dev and 0.5.10-dev
+
+- Start the shared SSH crypto-policy review from any of V-230251, V-230252, V-272482 or V-272483. Include required catalog companions and disclose the OpenSSL impact of changing stock DEFAULT to FIPS.
+- Show the exact staged policy diff and proceed directly to one attended approval when the shared SSH change is the only operation. Respect explicit exclusions and fixed checklist or resume scopes.
+
 ## 0.6.9-urwid-dev and 0.5.9-dev
 
 - Open Resolve for the 22 selected findings to see assessment evidence, the blocking prerequisite, the available fix, and what to verify afterward.

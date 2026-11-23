@@ -654,7 +654,6 @@ class Workbench:
                 "import": "Checklist imported. Review the proposed scope.",
                 "load": "Saved selection loaded.",
                 "resolve-input": "Input accepted. Review a fresh plan.",
-                "resolve-scope": "Required finding added. Review the updated selection.",
             }.get(completed, "")
             if not self.initialized:
                 self.initialized = True
@@ -712,7 +711,6 @@ class Workbench:
             "detail": "Loading finding details…", "import": "Validating the checklist…",
             "settings": "Validating settings and refreshing…", "setup": "Validating run settings and scope…",
             "resolve": "Loading resolution steps…", "resolve-input": "Checking the supplied input…",
-            "resolve-scope": "Checking the scope dependency…",
             "accept": "Preparing the attended run…",
         }.get(fields[0], "Working…")
         self.status_widget.set_text(("accent", self.feedback))
@@ -1222,8 +1220,12 @@ class Workbench:
         if can_apply and self.selected:
             items.append(("Implement selected ({})".format(len(self.selected)), self.review_selection))
         if self.focus_id:
-            plan = "Implement only" if can_apply else "Preview"
-            items.append(("{} {} (F6)".format(plan, self.focus_id), self.review_focused))
+            if can_apply and self.rows.get(self.focus_id, {}).get("ssh_shared"):
+                label = "Review SSH change for {} (F6)".format(self.focus_id)
+            else:
+                plan = "Implement only" if can_apply else "Preview"
+                label = "{} {} (F6)".format(plan, self.focus_id)
+            items.append((label, self.review_focused))
             items.append(("Resolve " + self.focus_id, self.open_resolution))
         items.extend([
             ("Quick triage views (F10)", self.open_quick_views),
@@ -1481,10 +1483,6 @@ class Workbench:
         controls = []
         if event.get("title"):
             controls.append(WorkbenchDocumentLine(("section", wb_text(event["title"]))))
-        dependency = event.get("dependency")
-        if dependency:
-            controls.append(wb_button("Review required " + wb_line(dependency["id"]),
-                                      lambda: self.confirm_resolution_scope(finding, dependency)))
         controls.extend(wb_button(wb_line(field["label"]),
                                   lambda item=field: self.edit_resolution_input(finding, item))
                         for field in event.get("inputs", []))
@@ -1510,7 +1508,7 @@ class Workbench:
     def resolution_selection(self):
         if self.review and self.resolution_origin and self.resolution_origin[0] in (
                 "review", "review index", "review item"):
-            return ",".join(sorted(row["id"] for row in self.review["rows"]))
+            return ",".join(sorted(row["id"] for row in self.review["rows"] if not row.get("scope_added")))
         return ",".join(sorted(self.selected))
 
     def edit_resolution_input(self, finding, field, initial=None, error=""):
@@ -1543,15 +1541,6 @@ class Workbench:
         self.open_modal(label, wb_text(field.get("prompt")),
                         [("Review input", lambda: submit(editor.edit_text)), ("Back", self.close_modal)],
                         widgets=[urwid.AttrMap(editor, "input", "focus"), feedback], initial="body")
-
-    def confirm_resolution_scope(self, finding, dependency):
-        required = dependency["id"]
-        message = "{}  {}\n\n{}\n\nReview the updated scope before starting approvals.".format(
-            wb_line(required), wb_line(dependency.get("title")), wb_text(dependency.get("reason")))
-        self.open_modal("Include required finding", message,
-                        [("Include " + wb_line(required),
-                          lambda: self.request("resolve-scope", finding, required, self.resolution_selection())),
-                         ("Back", self.close_modal)], default=1)
 
     def review_selection(self):
         if not self.selected:
@@ -1600,7 +1589,10 @@ class Workbench:
         actions = [("Back", self.return_from_review)]
         actions.append(("Plan" if diff_only else "Diffs", lambda: self.show_review(not diff_only)))
         if self.review.get("token"):
-            approve_label = "Continue" if focused else "Start approvals"
+            if self.review.get("ssh_single"):
+                approve_label = "Start approval"
+            else:
+                approve_label = "Continue" if focused else "Start approvals"
             actions.append((approve_label if can_apply and groups["operations"] else "Save report",
                             self.confirm_review))
         else:
@@ -1649,6 +1641,9 @@ class Workbench:
             individual = sum(bool(self.context.get("review_each")) or row.get("risk") != "low"
                              for row in groups["operations"])
             summary += "\nIndividual approvals at preview  {} of {}".format(individual, operations)
+        added = [row["id"] for row in self.review.get("rows", []) if row.get("scope_added")]
+        if added:
+            summary += "\nRelated findings included automatically  " + "  ".join(added)
         if self.review_hidden:
             summary += "\n{} selected outside this view. They are included in the plan.".format(self.review_hidden)
         return summary
@@ -1710,6 +1705,9 @@ class Workbench:
             return
         groups = self.review_groups()
         can_apply = self.context.get("can_apply")
+        if can_apply and self.review.get("ssh_single") and len(groups["operations"]) == 1:
+            self.request("accept", token)
+            return
         if can_apply and groups["operations"]:
             title = "Confirm reviewed scope"
             verb = "Continue" if self.review.get("focused") else "Start approvals"
