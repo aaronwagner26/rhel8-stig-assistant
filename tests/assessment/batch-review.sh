@@ -26,7 +26,7 @@ pending=V-274877
 compliant=V-230404
 grouped=V-230406
 choice=Implement-Selected
-confirmation_response=1
+preview_response=1
 preview_title='' preview_action='' preview='' confirmation='' menu=''
 
 fail() {
@@ -98,12 +98,13 @@ tui_dialog() {
             shift 2
             [[ $1 == --exit-label && $3 == --textbox ]] || fail 'expected the review to open a proposed-changes screen'
             preview_action=$2
-            preview=$(< "$4") ;;
+            preview=$(< "$4")
+            if [[ $preview_action != 'Save report' ]]; then return "$preview_response"; fi ;;
         'Confirm reviewed scope')
             contains "$*" "--defaultno --yes-label $preview_action --no-label Back"
             contains "$*" 'Back is the default.'
             confirmation="$*"
-            return "$confirmation_response" ;;
+            return 1 ;;
         *) fail "unexpected dialog $title" ;;
     esac
 }
@@ -121,27 +122,25 @@ contains "$preview" $'Blocked (1)\n  '"$blocked_id"
 contains "$preview" $'Pending activation (1)\n  '"$pending"
 contains "$preview" $'Already compliant (1)\n  '"$compliant"
 contains "$preview" '+ new audit rule'
-contains "$confirmation" '6 selected | 1 proposed changes | 1 hidden by filters.'
-contains "$confirmation" 'Each still needs attended approval.'
-[[ $preview_action == 'Start approvals' && $TUI_IMPLEMENT == 0 ]] || fail 'Back started approvals'
+[[ ! $confirmation && $preview_action == 'Start approval' && $TUI_IMPLEMENT == 0 ]] || fail 'Back started approvals'
 [[ ${refresh_trace[*]} == 'review browse' ]] || fail 'Back did not restore the browsing scope'
 
-confirmation_response=0
+preview_response=0
 tui_actions || fail 'Start approvals did not return cleanly from Actions'
 [[ $TUI_IMPLEMENT == 1 && ${SCOPE[*]} == "${TUI_IDS[*]}" ]] || fail 'Start approvals did not keep the full selected scope'
 
-confirmation_response=1
+preview_response=1
 TUI_IMPLEMENT=0
 choice=Implement-One
 tui_actions || fail 'Back from the one-finding review failed'
 contains "$preview_title" "Implement | $proposed"
-contains "$confirmation" "Continue with $proposed only?"
+[[ ! $confirmation && $preview_action == 'Start approval' ]] || fail 'Focused review asked for the scope again'
 [[ $TUI_IMPLEMENT == 0 && ${#TUI_SELECTED[@]} == ${#TUI_IDS[@]} ]] || fail 'One-finding Back discarded the batch selection'
 
 choice=Implement-Selected
 TUI_SELECTED=(["$manual"]=1)
 tui_actions || fail 'Back from the report-only review failed'
 [[ $preview_action == 'Save report' && $TUI_IMPLEMENT == 0 ]] || fail 'A selection without a proposal offered approval'
-contains "$confirmation" 'Save the findings and follow-up actions to a report?'
+contains "$confirmation" 'Save the assessed findings and follow-up actions to a report?'
 
 printf 'PASS Classic batch inventory, focused scope, Start approvals, and default Back\n'

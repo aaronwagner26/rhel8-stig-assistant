@@ -36,6 +36,7 @@ From the directory containing the verified script, launch Status with JSON repor
 ## Scope, formats, and site inputs
 
 - Repeat `--only` or combine it with `--ids-file` for a union of explicit IDs. The file format is one ID per line with optional whole-line `#` comments and blank lines. `--skip` takes precedence. See the [sample scope](../examples/scope.txt).
+- Use `--guided` to select the 22 findings in the resolution guide without listing them each time. It can be combined with the usual explicit selectors and exclusions. [Guided scope](resolution-guide.md)
 - With no explicit selector, either CLI assesses the registered 164-ID scope. With no explicit selection source, the Urwid workspace starts with its findings unchecked. [Rule coverage](rule-coverage.md)
 - `--ckl FILE` imports Open findings from legacy DISA CKL XML. It narrows any explicit selection, applies exact benchmark and rule revision checks, and requires acknowledgment for missing or mismatched asset metadata. The import starts a fresh assessment. CKLB is a separate format.
 - `--config FILE` accepts supported site values. Record only settings authorized for that host. See the [sample site file](../examples/site.conf).
@@ -52,13 +53,19 @@ The batch review lists the selected IDs under proposed changes, findings covered
 
 Apply and rollback require the verified script at a trusted path. The script and its parent directories must be root-owned, with group and other write access disabled. The preflight rejects symlinks in that path. Keep the corresponding script build with the run records you may need to reopen.
 
-The tool shows the complete selected plan first. Confirming the reviewed scope advances to attended decisions. Scope confirmation defaults to **Back** and per-change approval defaults to **Skip**. When offered, `A` approves the current and remaining eligible unchanged low-risk operations. Sensitive or revised changes require individual approval. Use `--review-each` to ask about every operation. End-of-input stops writes. When reviewed scope or effective site inputs change, prepare and review a fresh plan.
+The complete preview takes you straight to attended decisions through **Start approval** or **Start approvals**. The actual decision defaults to **Skip**. When offered, `A` approves the current and remaining eligible unchanged low-risk operations. Sensitive or revised changes require individual approval. Use `--review-each` to disable optional grouping and bulk approval. End-of-input stops writes. When reviewed scope or effective site inputs change, prepare and review a fresh plan.
 
 The assessment result, handling, operational risk, and action outcome answer different questions. **Review** means the available evidence is insufficient to resolve the assessment. **Blocked** indicates an unavailable prerequisite or an ineligible operation. Some findings require administrator evidence or manual work. Use the outcome and evidence to plan activation, verification, or handoff.
 
 In Urwid, open **Resolve** from a finding’s Details or from its entry in the batch **Finding index**. In Classic, highlight a supported finding and choose **Actions → Resolve**. The panel shows the current observation and any exact blocking prerequisite, then describes the guarded fix, administrator decision, and verification. Enter a non-sensitive evidence reference if you have one, and save the run with that finding selected to keep the reference in **Administrator actions**.
 
 For V-230484, enter an approved DNS hostname or IPv4 address in Resolve or pass `--approved-time-source HOST` for the run. To use a protected site configuration, set `CHRONY_APPROVED_SERVER=HOST`. Reassess and review any resulting proposal. An existing source, managed configuration, or unresolved activation can require additional work. [All 22 findings](resolution-guide.md)
+
+For V-251710, **Check existing AIDE baseline** collects a brief, read-only result from the verified default RHEL configuration. It can take up to two minutes. The report keeps the summary and any evidence reference. The administrator confirms that the baseline is trustworthy and that it covers the required security functions.
+
+### Review eligible changes together
+
+Expect one operation for each eligible shared file change. Besides the SSH operation, the tool can combine the selected unused kernel modules (V-230494–V-230499), the two selected authselect empty-password rules (V-244541 and V-268322), and the two selected audit rules (V-274877 and V-288831). Each plan lists the files, evidence and affected findings. A blocked member keeps its own result. Use `--skip` to leave a specific finding out of an optional group.
 
 ### Review the shared SSH policy
 
@@ -69,6 +76,7 @@ When the shared SSH plan is the only proposed change, **Start approval** opens i
 ## Reports, rechecks, and recovery
 
 - Reports default to `/var/tmp/rhel8-stig-UID`, where UID is the effective user ID. Backups default to `/var/lib/rhel8-stig/backups`. Use an authorized location and keep reports and backup contents private.
+- **Follow-up** and `next-steps.txt` summarize pending activation by subsystem, followed by inputs or evidence that still need attention. In Urwid, run the read-only recheck from Follow-up after completing activation. Classic shows the matching recheck command.
 - An in-app recheck starts a read-only Status run. It uses the eligible saved manifest, original scope, same executable build, and matching effective site settings. Required CKL source and asset checks still apply.
 - Saved-run comparison reads protected JSON reports with verified manifests for the same host fingerprint and benchmark. The interface shows differing scope and action-only changes explicitly.
 - `--resume RUN-ID` requires the executable build associated with the run. Use the Recovery and report views to inspect errors and backup references. `--rollback RUN-ID` is a separate preview and attended restoration workflow. Review what changed since the original operation first.

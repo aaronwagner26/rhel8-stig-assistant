@@ -58,11 +58,11 @@ def decode_workbench_event(frame):
                     or any(type(row.get(field, False)) is not bool for field in ("scope_added", "ssh_shared"))):
                 raise ValueError("The workbench received an invalid finding row.")
             findings.add(finding)
-    if kind == "review" and type(event.get("ssh_single", False)) is not bool:
-        raise ValueError("The workbench received an invalid SSH approval indicator.")
     if kind == "progress" and not 0 <= event["complete"] <= event["count"]:
         raise ValueError("The workbench received an invalid progress count.")
     if kind == "resolution":
+        if type(event.get("aide_check", False)) is not bool:
+            raise ValueError("The workbench received an invalid evidence action.")
         if any(not isinstance(item, dict) or any(not isinstance(item.get(key), str)
                    for key in ("key", "label", "prompt", "value")) for item in event["inputs"]):
             raise ValueError("The workbench received an invalid resolution input.")

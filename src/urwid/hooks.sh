@@ -216,6 +216,9 @@ urwid_results_request() {
     urwid_prompt_value format "$FORMAT"
     urwid_prompt_value operator "${OPERATOR-}"
     urwid_prompt_value summary "$(render_applied_ids)"
+    if [[ -s $RUN_DIR/next-steps.txt ]]; then
+        urwid_prompt_value next_steps "$(< "$RUN_DIR/next-steps.txt")"
+    fi
     printf ',"rows":['
     for id in "${SCOPE[@]}"; do
         printf '%s{"id":' "$delimiter"
@@ -230,7 +233,7 @@ urwid_results_request() {
     done
     printf '],"files":['
     delimiter=''
-    for file in summary.txt diff.txt preview.txt admin-actions.txt changes.txt ckl-import.txt \
+    for file in summary.txt diff.txt preview.txt next-steps.txt admin-actions.txt changes.txt ckl-import.txt \
                 results.json results.csv run.log; do
         [[ -f $RUN_DIR/$file && ! -L $RUN_DIR/$file ]] || continue
         printf '%s{"name":' "$delimiter"

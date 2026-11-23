@@ -67,20 +67,45 @@ class BatchWorkbenchTests(unittest.TestCase):
                                    "ASSESSMENT ERRORS"), findings):
             self.assertIn("{} (1)".format(label), contents)
             self.assertIn(finding["id"], contents)
-        self.assertIn("Start approvals", contents)
+        self.assertIn("Start approval", contents)
         self.ui.resize(56, 18)
-        self.assertIn("Start approvals", self.view_text((56, 18)))
+        self.assertIn("Start approval", self.view_text((56, 18)))
 
-    def test_confirmation_defaults_to_back_and_passes_the_reviewed_token(self):
+    def test_apply_review_defaults_to_back(self):
         findings = [row(230224, ready=True, operation=True)]
         self.assessed(findings)
         self.review(findings)
-        self.ui.confirm_review()
+        self.ui.base_frame.focus_position = "footer"
+        self.ui.widget.keypress(SCREEN, "enter")
+        self.assertEqual(self.commands, [("back",)])
+
+    def test_ready_single_and_batch_start_decisions_directly(self):
+        for count, label in ((1, "Start approval"), (3, "Start approvals")):
+            with self.subTest(count=count):
+                self.commands.clear()
+                operations = [row(230224 + index, ready=True, operation=True) for index in range(count)]
+                findings = operations + [row(230229, outcome="BLOCKED", handling="Blocked")]
+                self.assessed(findings)
+                self.review(findings)
+                actions = self.ui.base_frame.footer.contents[0][0]
+                self.assertEqual(actions.contents[2][0].base_widget.get_label(), label)
+                self.ui.base_frame.focus_position = "footer"
+                for key in ("tab", "tab", "enter"):
+                    self.ui.widget.keypress(SCREEN, key)
+                self.assertIsNone(self.ui.modal)
+                self.assertEqual(self.commands, [("accept", "fixture-token")])
+
+    def test_report_confirmation_defaults_to_back_and_passes_the_reviewed_token(self):
+        findings = [row(230224, outcome="BLOCKED", handling="Blocked")]
+        self.assessed(findings)
+        self.review(findings)
+        self.ui.continue_review()
+        self.assertIn("Save report", self.view_text())
         self.assertIn("Back is selected by default.", self.view_text())
         self.ui.widget.keypress(SCREEN, "enter")
         self.assertIsNone(self.ui.modal)
         self.assertEqual(self.commands, [])
-        self.ui.confirm_review()
+        self.ui.continue_review()
         self.ui.widget.keypress(SCREEN, "shift tab")
         self.ui.widget.keypress(SCREEN, "enter")
         self.assertEqual(self.commands, [("accept", "fixture-token")])

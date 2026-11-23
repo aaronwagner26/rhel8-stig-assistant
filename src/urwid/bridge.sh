@@ -393,7 +393,7 @@ urwid_review_token() {
 }
 
 urwid_send_review() {
-    local csv=$1 focused=$2 review ssh_single=false
+    local csv=$1 focused=$2 review
     local IMPLEMENT_DIFF=1
     if ! urwid_site_snapshot_matches; then
         urwid_event error 'The site configuration changed. Press F7 for Run settings, then rebuild the preview.'
@@ -424,8 +424,7 @@ urwid_send_review() {
     fi
     printf '{'
     urwid_json_fields type review token "$URWID_REVIEW_TOKEN" focused "$focused" text "$review"
-    if [[ $MODE == apply ]] && ssh_single_review; then ssh_single=true; fi
-    printf ',"ssh_single":%s,"rows":' "$ssh_single"
+    printf ',"rows":'
     urwid_rows review
     printf '}\n'
 }
@@ -472,7 +471,17 @@ urwid_send_resolution() {
         fi
     fi
     printf ']'
+    if [[ $id == V-251710 ]]; then printf ',"aide_check":true'; fi
     printf '}\n'
+}
+
+urwid_check_aide() {
+    if [[ $1 != V-251710 ]] || ! urwid_assessed_id "$1"; then
+        urwid_event error 'Assess V-251710 before collecting its AIDE evidence.'
+        return
+    fi
+    resolution_aide_check || return 2
+    urwid_send_resolution "$1"
 }
 
 urwid_reassess_time_source() {
@@ -718,6 +727,7 @@ urwid_dispatch() {
     case $command:$# in
         resolve:1) urwid_send_resolution "$1"; return ;;
         resolve-input:4) urwid_resolution_input "$@"; return ;;
+        resolve-aide:1) urwid_check_aide "$1"; return ;;
     esac
     if [[ $command != accept && $command != detail ]]; then URWID_REVIEW_TOKEN=''; fi
     if [[ $command != accept && $command != review ]]; then urwid_restore_browse; fi

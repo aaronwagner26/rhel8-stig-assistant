@@ -40,6 +40,7 @@ _HISTORY_ACTIONS = {
 }
 _HISTORY_FILES = (
     ("summary.txt", "Summary"),
+    ("next-steps.txt", "Next steps"),
     ("admin-actions.txt", "Administrator actions"),
     ("changes.txt", "Changes made"),
     ("preview.txt", "Reviewed proposal"),

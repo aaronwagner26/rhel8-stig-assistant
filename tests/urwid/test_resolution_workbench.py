@@ -45,11 +45,12 @@ class ResolutionWorkbenchTests(unittest.TestCase):
         frame = frame or self.ui.base_frame
         return [entry for entry, _ in frame.footer.contents[0][0].contents]
 
-    def resolution(self, finding, inputs=()):
+    def resolution(self, finding, inputs=(), **fields):
         event = dict(type="resolution", id=finding, title="Synthetic policy",
                      text="OBSERVED EVIDENCE\nThe source is missing.\n\n"
                           "VERIFICATION\nCheck persistent configuration and live state.",
                      inputs=list(inputs))
+        event.update(fields)
         self.ui.handle_event(event)
 
     def test_details_routes_to_resolution_and_back_preserves_page(self):
@@ -65,6 +66,22 @@ class ResolutionWorkbenchTests(unittest.TestCase):
         self.assertEqual(self.ui.selected, {TIME, SSH})
         self.assertEqual(self.commands, [("detail", TIME), ("resolve", TIME)])
 
+    def test_ready_details_and_resolve_open_the_focused_review(self):
+        for page in ("details", "resolve"):
+            with self.subTest(page=page):
+                self.ui.rows[TIME]["ready"] = True
+                self.ui.details(TIME)
+                self.ui.handle_event(dict(type="detail", id=TIME, text="Synthetic details"))
+                if page == "resolve":
+                    self.press_button(self.footer_buttons(), "Resolve")
+                    self.resolution(TIME, [TIME_FIELD])
+                self.press_button(self.footer_buttons(), "Review change")
+                self.assertEqual(self.commands[-1], ("review", TIME, TIME))
+                self.ui.handle_event(dict(type="review", rows=[dict(row(TIME), operation=True)],
+                                          focused=TIME, token="a-plan-token", text="Synthetic plan"))
+                self.assertIsNone(self.ui.resolution_origin)
+                self.assertEqual(self.ui.selected, {TIME, SSH})
+
     def test_shared_ssh_review_displays_related_findings_and_starts_one_approval(self):
         leader = "V-230251"
         self.ui.focus_id = SSH
@@ -77,7 +94,7 @@ class ResolutionWorkbenchTests(unittest.TestCase):
                     dict(row(SSH), linked=leader),
                     dict(row(RELATED, selected=False), scope_added=True)]
         self.ui.handle_event(dict(type="review", rows=reviewed, focused=SSH, text="Synthetic preview",
-                                  token="plan-token", ssh_single=True))
+                                  token="plan-token"))
         self.assertIn("Related findings included automatically", self.screen())
         self.assertIn(leader, self.screen())
         self.assertIn(RELATED, self.screen())
@@ -98,11 +115,14 @@ class ResolutionWorkbenchTests(unittest.TestCase):
         self.ui.open_resolution(TIME)
         self.resolution(TIME, [TIME_FIELD])
         self.ui.edit_resolution_input(TIME, TIME_FIELD, "ntp.example.org")
+        self.ui.widget.keypress(SCREEN, "tab")
         self.ui.widget.keypress(SCREEN, "enter")
-        self.assertIn("Use this input to build a fresh plan", self.screen())
         self.assertEqual(self.commands, [("resolve", TIME)])
-        self.ui.widget.keypress(SCREEN, "shift tab")
+        self.assertIsNone(self.ui.modal)
+        self.ui.edit_resolution_input(TIME, TIME_FIELD, "ntp.example.org")
+        self.assertIn("Enter to use value", self.screen())
         self.ui.widget.keypress(SCREEN, "enter")
+        self.assertIsNone(self.ui.modal)
         self.assertEqual(self.commands[-1], ("resolve-input", TIME, "approved-time-source",
                                              "ntp.example.org", TIME + "," + SSH))
         self.ui.handle_event(dict(type="error", message="Synthetic validation error"))
@@ -114,13 +134,25 @@ class ResolutionWorkbenchTests(unittest.TestCase):
         self.resolution(INTEGRITY, [NOTE_FIELD])
         self.ui.edit_resolution_input(INTEGRITY, NOTE_FIELD, "Reviewed the approved baseline.")
         self.ui.widget.keypress(SCREEN, "enter")
-        self.assertIn("Record this evidence note", self.screen())
-        self.ui.widget.keypress(SCREEN, "shift tab")
-        self.ui.widget.keypress(SCREEN, "enter")
+        self.assertIsNone(self.ui.modal)
         self.assertEqual(self.commands[-1], ("resolve-input", INTEGRITY, "evidence-note",
                                              "Reviewed the approved baseline.", TIME + "," + SSH))
         self.resolution(INTEGRITY, [dict(NOTE_FIELD, value="Reviewed the approved baseline.")])
         self.assertIn("Evidence note recorded.", self.screen())
+        self.ui.unhandled_input("esc")
+        self.assertEqual(self.ui.page, "findings")
+        self.assertEqual(self.ui.selected, {TIME, SSH})
+
+    def test_aide_evidence_action_uses_resolution_without_changing_selection(self):
+        self.ui.open_resolution(INTEGRITY)
+        self.resolution(INTEGRITY, [NOTE_FIELD], aide_check=True)
+        report = self.ui.base_frame.body.body
+        self.press_button(report, "Check existing AIDE baseline")
+        self.assertEqual(self.commands[-1], ("resolve-aide", INTEGRITY))
+        self.assertIn("Checking the existing AIDE baseline", self.screen())
+        self.resolution(INTEGRITY, [NOTE_FIELD], aide_check=True, text="Native integrity check result")
+        self.assertIn("Native integrity check result", self.screen())
+        self.assertIn("AIDE check finished", self.screen())
         self.ui.unhandled_input("esc")
         self.assertEqual(self.ui.page, "findings")
         self.assertEqual(self.ui.selected, {TIME, SSH})

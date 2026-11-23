@@ -326,7 +326,9 @@ class _AttendedPrompt:
             lines = [("section", "Follow-up  ({})".format(len(follow_up))),
                      ("muted", "Review Administrator actions for prerequisites and activation steps."),
                      ("base", "")]
-            if request.get("verification_command"):
+            if request.get("next_steps"):
+                lines += [("base", request["next_steps"]), ("base", "")]
+            elif request.get("verification_command"):
                 lines += [("section", "Recheck this scope"),
                           ("accent", request["verification_command"]),
                           ("muted", "Use the same verified build and operator account after follow-up work."),
@@ -369,6 +371,8 @@ class _AttendedPrompt:
                 lines[2:2] = [("accent", request["recheck_note"])]
             if request.get("operator"):
                 lines[2:2] = [("muted", "Operator " + _att_text(request["operator"]))]
+            if request.get("next_steps"):
+                lines[2:2] = [("accent", "Open Follow-up for the remaining actions grouped by subsystem.")]
             if rows:
                 assessments = [row.get("assessment") for row in rows]
                 labels = (("PASS", "Pass", "success"), ("FAIL", "Fail", "danger"),

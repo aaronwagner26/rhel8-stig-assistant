@@ -54,6 +54,7 @@ tui_backend_refresh() {
     done
 }
 verify_script() { return 0; }
+resolution_aide_check() { RESOLUTION_AIDE_RESULT='Fixture AIDE observed no differences.'; }
 
 urwid_dispatch scan
 urwid_dispatch review V-230251 V-230251 || exit $?
@@ -67,6 +68,8 @@ group=V-230484,V-251710
 urwid_dispatch review "$group" '' || exit $?
 token=$URWID_REVIEW_TOKEN
 urwid_dispatch resolve V-251710
+[[ $URWID_REVIEW_TOKEN == "$token" ]]
+urwid_dispatch resolve-aide V-251710
 [[ $URWID_REVIEW_TOKEN == "$token" ]]
 urwid_dispatch resolve-input V-251710 evidence-note 'Baseline approval E-2' "$group"
 [[ $URWID_REVIEW_TOKEN == "$token" ]]
@@ -89,23 +92,24 @@ class ResolutionBridgeTests(unittest.TestCase):
             events = [decode_workbench_event(line) for line in result.stdout.splitlines()]
             self.assertEqual([event["type"] for event in events],
                              ["state", "review", "resolution", "browse", "error", "review",
-                              "resolution", "resolution", "error", "state", "error"])
+                              "resolution", "resolution", "resolution", "error", "state", "error"])
             self.assertEqual([row["id"] for row in events[0]["rows"]],
                              ["V-230251", "V-230484", "V-251710"])
             self.assertTrue(events[0]["rows"][0]["ssh_shared"])
-            self.assertTrue(events[1]["ssh_single"])
             self.assertEqual([row["id"] for row in events[1]["rows"] if row["scope_added"]],
                              ["V-230252", "V-272482", "V-272483", "V-288829"])
             self.assertEqual(events[2]["id"], "V-288829")
             self.assertIn("available findings", events[4]["message"])
-            self.assertFalse(events[5]["ssh_single"])
+            self.assertTrue(events[6]["aide_check"])
             self.assertIn("Assessment NEEDS_REVIEW", events[6]["text"])
-            self.assertEqual(events[7]["inputs"][0]["value"], "Baseline approval E-2")
-            chrony = next(row for row in events[9]["rows"] if row["id"] == "V-230484")
+            self.assertIn("Fixture AIDE observed no differences.", events[7]["text"])
+            self.assertEqual(events[8]["inputs"][0]["value"], "Baseline approval E-2")
+            chrony = next(row for row in events[10]["rows"] if row["id"] == "V-230484")
             self.assertTrue(chrony["operation"])
-            self.assertIn("preview is unavailable", events[10]["message"])
+            self.assertIn("preview is unavailable", events[11]["message"])
             written_report = (Path(directory) / "admin-actions.txt").read_text()
             self.assertIn("Operator-provided evidence reference: Baseline approval E-2", written_report)
+            self.assertIn("Fixture AIDE observed no differences.", written_report)
             self.assertIn("--approved-time-source ntp.example.org", written_report)
 
 

@@ -2,7 +2,7 @@
 
 An independent, attended STIG assessment and remediation tool for RHEL 8.10 x86_64. Use the Urwid terminal interface to select findings, review each change, and recheck the host afterward. The Classic edition provides the same rule engine through the CLI and a `dialog` interface. Each edition runs as a standalone Bash script.
 
-**Current development versions** Urwid `0.6.10-urwid-dev` and Classic `0.5.10-dev`
+**Current development versions** Urwid `0.6.11-urwid-dev` and Classic `0.5.11-dev`
 
 **Pinned baseline** DISA RHEL 8 STIG Version 2 Release 9 (Sunset), with 164 of 371 rules registered in both editions. [DISA STIG announcements](https://www.cyber.mil/stigs/stig-announcements)
 
@@ -10,12 +10,12 @@ The catalog records which registered rules support attended remediation and whic
 
 ## Get started
 
-Download the script and its checksum for the edition you want, or build both from source. Use a disposable RHEL 8.10 guest for the first run. [GitHub release](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/tag/v0.6.10-urwid-dev) · [Build instructions](#build-from-source)
+Download the script and its checksum for the edition you want, or build both from source. Use a disposable RHEL 8.10 guest for the first run. [GitHub release](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/tag/v0.6.11-urwid-dev) · [Build instructions](#build-from-source)
 
 | Edition | Script | SHA-256 |
 | --- | --- | --- |
-| Urwid `0.6.10-urwid-dev` | [rhel8-stig-urwid.sh](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.10-urwid-dev/rhel8-stig-urwid.sh) | [rhel8-stig-urwid.sh.sha256](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.10-urwid-dev/rhel8-stig-urwid.sh.sha256) |
-| Classic `0.5.10-dev` | [rhel8-stig.sh](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.10-urwid-dev/rhel8-stig.sh) | [rhel8-stig.sh.sha256](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.10-urwid-dev/rhel8-stig.sh.sha256) |
+| Urwid `0.6.11-urwid-dev` | [rhel8-stig-urwid.sh](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.11-urwid-dev/rhel8-stig-urwid.sh) | [rhel8-stig-urwid.sh.sha256](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.11-urwid-dev/rhel8-stig-urwid.sh.sha256) |
+| Classic `0.5.11-dev` | [rhel8-stig.sh](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.11-urwid-dev/rhel8-stig.sh) | [rhel8-stig.sh.sha256](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.11-urwid-dev/rhel8-stig.sh.sha256) |
 
 Run the Urwid quick start from the directory containing its script and checksum.
 
@@ -42,12 +42,13 @@ For the Classic CLI, run the equivalent read-only check after verifying its chec
 )
 ```
 
-**Status** assesses settings and saves protected reports. **Apply** requires an explicit `--apply`, root, an interactive terminal, and attended approval. Classic Status automatically reuses eligible observations from the same host and boot. Use `--fresh` to check the whole selected scope live. Interactive acceptance on a genuine RHEL 8.10 guest is pending. [Automatic rechecks](docs/operator-guide.md#automatic-rechecks-in-classic-status) · [Validation record](docs/validation-0.6.10.md)
+**Status** assesses settings and saves protected reports. **Apply** requires an explicit `--apply`, root, an interactive terminal, and attended approval. Classic Status automatically reuses eligible observations from the same host and boot. Use `--fresh` to check the whole selected scope live. Interactive acceptance on a genuine RHEL 8.10 guest is pending. [Automatic rechecks](docs/operator-guide.md#automatic-rechecks-in-classic-status) · [Validation record](docs/validation-0.6.11.md)
 
 | To do this | Start here |
 | --- | --- |
 | Preview the catalog | `./rhel8-stig-urwid.sh --list` |
 | Read the policy and local handling for a rule | `./rhel8-stig-urwid.sh --explain V-230494` |
+| Preview the 22 guided findings together | `./rhel8-stig-urwid.sh --diff --guided` |
 | Assess a limited scope from the command line | `./rhel8-stig-urwid.sh --status --only V-230494,V-230498` |
 | Preview eligible changes | `./rhel8-stig-urwid.sh --diff --only V-230494,V-230498` |
 | Review saved work | Launch `--gui --status` and press `F9` in **Run settings** |
@@ -92,7 +93,7 @@ The build checks the Classic source digest, emits that source unchanged as `dist
 
 - [Architecture](docs/architecture.md) explains the source layout and how the terminal interface uses the Bash engine.
 - [Changelog](CHANGELOG.md) describes the development versions.
-- [Validation](docs/validation-0.6.10.md) records fixture evidence and the remaining RHEL guest checks for this release.
+- [Validation](docs/validation-0.6.11.md) records fixture evidence and the remaining RHEL guest checks for this release.
 - [Release process](docs/releasing.md) covers changes, versioning, verification, and publication.
 - [Contributing](CONTRIBUTING.md) covers source changes and operator feedback.
 - [Security](SECURITY.md) explains how to share a concern privately.

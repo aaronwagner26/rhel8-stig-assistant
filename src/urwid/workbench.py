@@ -670,6 +670,7 @@ class Workbench:
             self.show_findings()
         elif kind == "review":
             self.close_modal()
+            self.resolution_origin = None
             self.feedback = ""
             self.review = event
             self.show_review(self.review_diff)
@@ -679,7 +680,8 @@ class Workbench:
             self.show_detail(event)
         elif kind == "resolution":
             self.close_modal()
-            self.feedback = "Evidence note recorded." if completed == "resolve-input" else ""
+            self.feedback = {"resolve-input": "Evidence note recorded.",
+                             "resolve-aide": "AIDE check finished. Review its evidence."}.get(completed, "")
             self.show_resolution(event)
         elif kind in ("notice", "error"):
             self.feedback = wb_line(event.get("message"))
@@ -711,6 +713,7 @@ class Workbench:
             "detail": "Loading finding details…", "import": "Validating the checklist…",
             "settings": "Validating settings and refreshing…", "setup": "Validating run settings and scope…",
             "resolve": "Loading resolution steps…", "resolve-input": "Checking the supplied input…",
+            "resolve-aide": "Checking the existing AIDE baseline…",
             "accept": "Preparing the attended run…",
         }.get(fields[0], "Working…")
         self.status_widget.set_text(("accent", self.feedback))
@@ -1458,10 +1461,12 @@ class Workbench:
         self.page = "details"
         key = wb_line(event.get("id"))
         body = wb_document(wb_text(event.get("text")))
-        actions = self.buttons([("Back", self.show_findings),
-                                ("Preview diff", lambda: self.preview_finding_diff(key)),
-                                ("Resolve", lambda: self.open_resolution(key))])
-        self.sections("Details  " + key, body, actions,
+        actions = [("Back", self.show_findings)]
+        if self.can_review_change(key):
+            actions.append(("Review change", lambda: self.review_focused(key)))
+        actions.extend([("Preview diff", lambda: self.preview_finding_diff(key)),
+                        ("Resolve", lambda: self.open_resolution(key))])
+        self.sections("Details  " + key, body, self.buttons(actions),
                       "Arrows and Page Up/Down scroll  |  Tab to buttons  |  Esc returns to findings")
 
     def open_resolution(self, finding=None):
@@ -1483,13 +1488,20 @@ class Workbench:
         controls = []
         if event.get("title"):
             controls.append(WorkbenchDocumentLine(("section", wb_text(event["title"]))))
+        if event.get("aide_check"):
+            controls.append(wb_button("Check existing AIDE baseline",
+                                      lambda: self.request("resolve-aide", finding)))
         controls.extend(wb_button(wb_line(field["label"]),
                                   lambda item=field: self.edit_resolution_input(finding, item))
                         for field in event.get("inputs", []))
         if controls:
             body.body[0:0] = controls + [urwid.Divider()]
             body.set_focus(0)
-        self.sections("Resolve  " + finding, body, self.buttons([("Back", self.close_resolution)]),
+        actions = [("Back", self.close_resolution)]
+        if (self.resolution_origin and self.resolution_origin[0] in ("details", "findings")
+                and self.can_review_change(finding)):
+            actions.append(("Review change", lambda: self.review_focused(finding)))
+        self.sections("Resolve  " + finding, body, self.buttons(actions),
                       "Enter opens an action   PgUp/PgDn scroll   Esc back")
 
     def close_resolution(self):
@@ -1513,6 +1525,7 @@ class Workbench:
 
     def edit_resolution_input(self, finding, field, initial=None, error=""):
         label = wb_line(field["label"])
+        action = "Record evidence" if field["key"] == "evidence-note" else "Use value"
         feedback = urwid.Text(("warning", wb_text(error)))
 
         def submit(value):
@@ -1521,26 +1534,15 @@ class Workbench:
                 feedback.set_text(("warning", "Enter printable text of up to 1,024 bytes."))
                 return
             value = value.strip()
-            selection = self.resolution_selection()
-            evidence = field["key"] == "evidence-note"
-            message = ("Record this evidence note for {}?" if evidence else
-                       "Use this input to build a fresh plan for {}?").format(finding)
-            edit = lambda: self.edit_resolution_input(finding, field, value)
-
-            def confirm():
-                self.request("resolve-input", finding, field["key"], value, selection,
-                             on_error=lambda problem: self.edit_resolution_input(finding, field, value, problem))
-
-            self.open_modal("Confirm input", message,
-                            [("Record evidence" if evidence else "Use input", confirm), ("Back", edit)],
-                            default=1, widgets=[WorkbenchDocumentLine(value)], escape=edit)
+            self.request("resolve-input", finding, field["key"], value, self.resolution_selection(),
+                         on_error=lambda problem: self.edit_resolution_input(finding, field, value, problem))
 
         editor = WorkbenchEdit("Value  ", wb_line(field.get("value")) if initial is None else initial,
                                submit=submit)
         editor.set_edit_pos(len(editor.edit_text))
-        self.open_modal(label, wb_text(field.get("prompt")),
-                        [("Review input", lambda: submit(editor.edit_text)), ("Back", self.close_modal)],
-                        widgets=[urwid.AttrMap(editor, "input", "focus"), feedback], initial="body")
+        prompt = wb_text(field.get("prompt")) + "\n\nEnter to {}. Esc to go back.".format(action.lower())
+        self.open_modal(label, prompt, [(action, lambda: submit(editor.edit_text)), ("Back", self.close_modal)],
+                        widgets=[urwid.AttrMap(editor, "input", "focus"), feedback], default=1, initial="body")
 
     def review_selection(self):
         if not self.selected:
@@ -1552,11 +1554,15 @@ class Workbench:
         self.review_diff = False
         self.request("review", ",".join(sorted(self.selected)), "")
 
-    def review_focused(self):
-        if self.focus_id:
+    def can_review_change(self, finding):
+        return self.context.get("can_apply") and self.rows.get(finding, {}).get("ready")
+
+    def review_focused(self, finding=None):
+        key = finding or self.focus_id
+        if key:
             self.review_diff = False
             self.review_hidden = 0
-            self.request("review", self.focus_id, self.focus_id)
+            self.request("review", key, key)
 
     def preview_finding_diff(self, finding=None):
         key = finding or self.focus_id
@@ -1589,12 +1595,11 @@ class Workbench:
         actions = [("Back", self.return_from_review)]
         actions.append(("Plan" if diff_only else "Diffs", lambda: self.show_review(not diff_only)))
         if self.review.get("token"):
-            if self.review.get("ssh_single"):
-                approve_label = "Start approval"
-            else:
-                approve_label = "Continue" if focused else "Start approvals"
-            actions.append((approve_label if can_apply and groups["operations"] else "Save report",
-                            self.confirm_review))
+            operations = len(groups["operations"])
+            label = "Save report"
+            if can_apply and operations:
+                label = "Start approval" if operations == 1 else "Start approvals"
+            actions.append((label, self.continue_review))
         else:
             actions.append(("Review again", self.retry_review))
             ledger += "\nThis proposal needs a fresh review before continuing."
@@ -1699,29 +1704,21 @@ class Workbench:
     def return_from_review(self):
         self.request("back")
 
-    def confirm_review(self):
+    def continue_review(self):
         token = self.review.get("token")
         if not token:
             return
         groups = self.review_groups()
         can_apply = self.context.get("can_apply")
-        if can_apply and self.review.get("ssh_single") and len(groups["operations"]) == 1:
+        if can_apply and groups["operations"]:
             self.request("accept", token)
             return
-        if can_apply and groups["operations"]:
-            title = "Confirm reviewed scope"
-            verb = "Continue" if self.review.get("focused") else "Start approvals"
-            count = len(groups["operations"])
-            message = ("Review {} proposed {}. You can approve or skip each change.\n"
-                       "Back is selected by default.").format(count, "change" if count == 1 else "changes")
-        else:
-            title, verb = "Save report", "Save report"
-            message = "Save the assessment for these reviewed findings? Back is selected by default."
-            if can_apply:
-                message = "No changes are ready for approval. " + message
-        self.open_modal(title, self.review_ledger(groups) + "\n\n" + message,
-                        [(verb, lambda: self.request("accept", token)),
-                                        ("Back", self.close_modal)], default=1)
+        message = "Save the assessment for these reviewed findings?\nBack is selected by default."
+        if can_apply:
+            message = "No changes are ready for approval.\n" + message
+        self.open_modal("Save report", self.review_ledger(groups) + "\n\n" + message,
+                        [("Save report", lambda: self.request("accept", token)), ("Back", self.close_modal)],
+                        default=1)
 
     def confirm_exit(self):
         self.open_modal("Exit Workbench", "Exit this selection session?",

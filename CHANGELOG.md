@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.11-urwid-dev and 0.5.11-dev
+
+- Use `--guided` for the 22 reviewed findings. Start attended approvals directly from the completed preview in both interfaces.
+- Stage eligible selected module controls, two authselect empty-password controls and two audit controls in separate shared transactions. Each transaction shows its affected findings and requires its own approval at the highest included risk.
+- Verify the stock authselect empty-password conditional with the native renderer and stage eligible fixes for copied templates.
+- Use the read-only AIDE check in Resolve to gather evidence against an existing verified default baseline. Accept site input directly and group remaining activation work in Next steps.
+
 ## 0.6.10-urwid-dev and 0.5.10-dev
 
 - Start the shared SSH crypto-policy review from any of V-230251, V-230252, V-272482 or V-272483. Include required catalog companions and disclose the OpenSSL impact of changing stock DEFAULT to FIPS.

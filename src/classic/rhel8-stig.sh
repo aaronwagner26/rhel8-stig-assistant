@@ -1,6 +1,6 @@
 #!/bin/bash -p
 # rhel8-stig.sh — Attended DISA RHEL 8 assessment and remediation utility.
-# 0.5.10-dev | 2026-11-23 | One review for shared SSH policy staging.
+# 0.5.11-dev | 2026-11-23 | Guided selection, grouped approvals, and follow-up.
 # Target: genuine RHEL 8.10 x86_64 with systemd. Boot behavior needs guest validation.
 # Baseline: DISA RHEL 8 STIG Version 2 Release 9 (Sunset, 2026-10-05).
 # Archive: U_RHEL_8_V2R9_STIG.zip
@@ -8,7 +8,7 @@
 #
 # 1. Metadata, compatibility, and change history
 
-readonly SCRIPT_VERSION=0.5.10-dev
+readonly SCRIPT_VERSION=0.5.11-dev
 readonly BASELINE='RHEL 8 STIG V2R9 (Sunset)'
 readonly ARCHIVE_SHA256=620bdff4d4a5b07b58817297dd5255a3f8f981a7227405c07b098588fe55cdee
 readonly ARCHIVE_URL=https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_RHEL_8_V2R9_STIG.zip
@@ -16,6 +16,10 @@ readonly ASSESSMENT_CACHE_DEFAULT=1
 
 changelog() {
     cat <<'EOF'
+0.5.11-dev (2026-11-23)
+  Select the 22 guided findings with --guided. Review verified shared
+  module, authentication and audit changes in fewer decisions, run the
+  read-only AIDE evidence check, and see outstanding work in Next steps.
 0.5.10-dev (2026-11-23)
   Start the shared SSH crypto-policy review from any of its four findings.
   Show all affected IDs and the exact policy diff before one approval.
@@ -102,6 +106,7 @@ Options for run modes:
   --ack-ckl-host SHA256         Acknowledge missing or mismatched host metadata for
                                  exactly this checklist digest. Otherwise prompt.
   --only V-ID[,V-ID...]          Select explicit IDs. May be repeated.
+  --guided                       Select all 22 findings with guided resolution.
   --ids-file FILE                Add explicit IDs from a local text file; one per line.
   --skip V-ID[,V-ID...]          Exclude IDs; may be repeated. Skip takes precedence.
   --config FILE                  Read site data such as MODPROBE_MANAGED=yes|no and
@@ -156,7 +161,7 @@ init_options() {
     GUI=0 REVIEW_EACH=0 IMPLEMENT_DIFF=0 FORCE_FRESH=0 CKL_FILE='' CKL_PATH='' CKL_SHA256='' CKL_SECTION_OPT='' CKL_HOST_ACK=''
     CKL_UI_SUMMARY='' CKL_ACK_RECORD='' SELECTION_WORK='' TUI_SCANNING=0
     CKL_RESUME_PATH='' CKL_RESUME_SHA256='' CKL_RESUME_SECTION=''
-    CHRONY_RUN_SERVER='' SSH_IMPACT_ONLY=0
+    CHRONY_RUN_SERVER='' SSH_IMPACT_ONLY=0 RESOLUTION_AIDE_RESULT=''
     declare -gA RESOLUTION_NOTES=() SSH_SCOPE_ADDED=()
     declare -gA CKL_MAPPED=() TUI_SELECTED=()
     declare -ga TUI_IDS=()
@@ -249,7 +254,7 @@ valid_state_path() {
 }
 
 parse_args() {
-    local flag value run_options=0
+    local flag value id run_options=0
     while (( $# )); do
         flag=$1
         shift
@@ -292,6 +297,11 @@ parse_args() {
                     --ack-ckl-host) CKL_HOST_ACK=$value ;;
                 esac ;;
             --gui|--tui) GUI=1; run_options=1 ;;
+            --guided)
+                for id in "${RULE_IDS[@]}"; do
+                    if resolution_supported "$id"; then REQUESTED[$id]=1; fi
+                done
+                SELECT_EXPLICIT=1 run_options=1 ;;
             --review-each) REVIEW_EACH=1; run_options=1 ;;
             --fresh) FORCE_FRESH=1; run_options=1 ;;
             --no-color) COLOR=never; run_options=1 ;;
@@ -644,6 +654,9 @@ render_admin_action() {
     fi
     if [[ ${RESOLUTION_NOTES[$id]-} ]]; then
         printf 'Operator-provided evidence reference: %s\n' "${RESOLUTION_NOTES[$id]}"
+    fi
+    if [[ $id == V-251710 && ${RESOLUTION_AIDE_RESULT-} ]]; then
+        printf 'V-251710 read-only AIDE evidence: %s\n' "$RESOLUTION_AIDE_RESULT"
     fi
     fn="rule_${id//-/_}_admin"
     if declare -F "$fn" >/dev/null; then
@@ -1086,6 +1099,60 @@ settings_from_stage() {
              $1 == "blacklist" {b++} END {exit !(i == 1 && b == 1 && NR == 2)}'
 }
 
+guided_module_id() {
+    [[ $1 == V-23049[4-9] ]]
+}
+
+guided_module_validate() {
+    local candidate=$1 target=$2 member name config
+    for member in V-230494 V-230495 V-230496 V-230497 V-230498 V-230499; do
+        if [[ $target != "$(module_path "$member")" ]]; then continue; fi
+        name=${MODULE[$member]}
+        [[ $(< "$candidate") == "$(module_bytes "$member" "$BOOT_ID")" &&
+           $(module_runtime "$name") == absent ]] && settings_from_stage "$candidate" "$name" || return 1
+        config=$(module_settings "$name") || return 1
+        if [[ $candidate == "$target" ]]; then
+            awk '$1 == "install" && $3 == "/bin/false" && NF == 3 {i++}
+                 $1 == "blacklist" && NF == 2 {b++}
+                 END {exit !(i == 1 && b == 1 && NR == 2)}' <<< "$config"
+            return
+        fi
+        [[ -z $config ]]
+        return
+    done
+    return 1
+}
+
+guided_module_add() {
+    local id=$1 payload
+    payload=$(module_bytes "$id" "$BOOT_ID") || return 1
+    edit_content "$(module_path "$id")" 0644 "$payload" guided_module_validate <<< "$payload"
+}
+
+guided_module_plan() {
+    local id=$1 member signature
+    module_plan "$id" || return 1
+    EDIT_CONTEXT=$PLAN_SIGNATURE
+    guided_module_add "$id" || return 1
+    for member in V-230494 V-230495 V-230496 V-230497 V-230498 V-230499; do
+        if [[ $member == "$id" || ! ${EFFECTIVE[$member]+selected} ||
+              ${PREVIEW_KEY[$member]+planned} ||
+              ( ${PLANNED_BY[$member]+grouped} && ${PLANNED_BY[$member]} != "$id" ) ]]; then continue; fi
+        signature=$(
+            allow_rule_plan "$id" "$member" && rule_dispatch "$member" && check_supports_plan "$member" &&
+                module_plan "$member" && printf '%s' "$PLAN_SIGNATURE"
+        ) || continue
+        if ! guided_module_add "$member"; then PLAN_REASON=''; continue; fi
+        EDIT_GROUPED+=" $member"
+        EDIT_CONTEXT+=" $member $signature"
+    done
+    EDIT_GROUPED=${EDIT_GROUPED# }
+    EDIT_RELATED=$EDIT_GROUPED
+    EDIT_DISPOSITION=pending
+    EDIT_REQUIREMENTS='Review dependencies for each listed module and any documented operational need. The tool verified that each target is an unused, loadable module with no competing directives.'
+    EDIT_ACTIVATION='Review the next-boot initramfs and kdump once for the listed modules. Reboot in an approved window and recheck the effective module policy and runtime state.'
+}
+
 rollback_module() {
     local id=$1 old=$2 target expected_attrs expected_metadata actual attrs hash pre_path type
     target=$(module_path "$id") || return 2
@@ -1361,6 +1428,9 @@ edit_public_diff() {
               ${EDIT_VALIDATOR[i]} == attended_crypto_module_validate ]]; then
             public_additions=$(attended_ssh_module) || return 1
         fi
+        if [[ ${EDIT_VALIDATOR[i]} == guided_module_validate ]]; then
+            public_additions=${EDIT_DIFF[i]}
+        fi
     fi
     if [[ $path == /etc/crypto-policies/config && ${EDIT_VALIDATOR[i]} == attended_crypto_config_validate ]]; then
         public_additions=$(printf '%s\n' "FIPS:$ATTENDED_SSH_MODULE" \
@@ -1397,13 +1467,15 @@ edit_public_diff() {
 
 file_plan() {
     local id=$1 fn="rule_${1//-/_}_plan" i record related
+    local -a planner=("$fn")
     PLAN_REASON='' PLAN_TEXT='' PLAN_SIGNATURE=''
     edit_reset || { edit_fail 'could not remove previous temporary plan'; return; }
     if ! have_tools getfacl getfattr cp mv ln rm chgrp findmnt df; then
         edit_fail 'file plans require ACL, extended-attribute and local filesystem tools'; return
     fi
     EDIT_TEMP=$(mktemp -d -- "$RUN_DIR/.plan.XXXXXXXX") || return 1
-    if ! "$fn"; then
+    if guided_module_id "$id" && (( ! REVIEW_EACH )); then planner=(guided_module_plan "$id"); fi
+    if ! "${planner[@]}"; then
         PLAN_REASON=${PLAN_REASON:-'the observed configuration did not meet the edit prerequisites'}
         return 1
     fi
@@ -6895,7 +6967,7 @@ rule_V_251710_admin() {
     printf '%s\n' \
         '1. Integrity administrator: identify the installed integrity tool and documented coverage of security functions. If using AIDE, determine its configured input database and the approved baseline provenance.' \
         '2. If no approved integrity application is deployed, plan an authorized installation and initialize from a trusted system state. Inspect the generated database before promoting it to the configured input path.' \
-        '3. Run aide --check during a bounded, approved window when AIDE is the tool. Protect raw results, confirm the configured database opens, and review any changes and documented coverage with the security owner.'
+        '3. Open Resolve to run the bounded AIDE evidence check for a verified default configuration. For a customized configuration or an alternative tool, review the approved integrity-check result and documented coverage with the security owner.'
 }
 
 rule_V_257258_check() {
@@ -7859,7 +7931,8 @@ expanded_pam_template_render() {
     awk -v mode="$mode" -v id="$id" '
         mode == "nullok" && tolower($0) ~ /nullok/ {
             # A comment retaining this exact token would also fail the DISA check.
-            if ($0 !~ /^[[:space:]]*(auth|password)[[:space:]]+(required|requisite|sufficient|optional)[[:space:]]+pam_unix\.so[[:space:]]+/ ||
+            if ($0 !~ /^[[:space:]]*(auth|password)[[:space:]]+(required|requisite|sufficient|optional)[[:space:]]+pam_unix\.so[[:space:]]+/) {bad=1; next}
+            if (!match($0,/[[:blank:]]+\{if not "without-nullok":nullok\}([[:blank:]]|$)/) &&
                 !match($0,/[[:blank:]]+nullok([[:blank:]]|$)/)) {bad=1; next}
             start=RSTART; end=RSTART+RLENGTH-1;
             if (substr($0,end,1) ~ /[[:blank:]]/) end--;
@@ -7906,14 +7979,42 @@ expanded_pam_password_null_validate() { expanded_pam_template_validate "$1" pass
 expanded_pam_system_null_validate() { expanded_pam_template_validate "$1" system-auth nullok; }
 expanded_pam_pwquality_validate() { expanded_pam_template_validate "$1" system-auth pwquality; }
 
-expanded_pam_template_plan() {
-    local id=$1 stack=$2 mode=$3 validator=$4 raw profile path rendered active fingerprint
-    local new="$EDIT_TEMP/$id.pam" description option_count
-    if ! raw=$(expanded_auth_select_raw); then
-        PLAN_REASON='a valid locally copied active authselect custom profile is required for source-only staging'; return 1
+expanded_pam_without_nullok_proof() {
+    local raw=$1 stack=$2 active=$3 candidate expected
+    candidate=$(expanded_auth_select_render "$raw without-nullok" "$stack") &&
+        expanded_pam_validate_stream nullok <<< "$candidate" || return 1
+    candidate=$(expanded_pam_active_lines <<< "$candidate" | awk '{$1=$1; print}') || return 1
+    expected=$(awk '{
+        separator=""
+        for (i=1; i<=NF; i++) if ($i != "nullok") {
+            printf "%s%s", separator, $i
+            separator=" "
+        }
+        print ""
+    }' <<< "$active") || return 1
+    [[ $expected && $candidate == "$expected" ]]
+}
+
+attended_optional_peer_ready() {
+    local id=$1 peer=$2
+    local PLAN_REASON ASSESSMENT EVIDENCE CHECK_PENDING CHECK_PLAN_CANDIDATE
+    if (( REVIEW_EACH )) ||
+       [[ ${SKIPPED[$peer]+excluded} || ${PREVIEW_KEY[$peer]+planned} ||
+          ( ${PLANNED_BY[$peer]+grouped} && ${PLANNED_BY[$peer]} != "$id" ) ]] ||
+       ! allow_rule_plan "$id" "$peer"; then
+        return 1
     fi
+    rule_dispatch "$peer" && check_supports_plan "$peer"
+}
+
+expanded_pam_template_edit() {
+    local id=$1 stack=$2 mode=$3 validator=$4 raw=$5 profile path rendered active fingerprint
+    local new="$EDIT_TEMP/$id.pam" description option_count
     profile=${raw%% *}
     path=/etc/authselect/$profile/$stack
+    if [[ ${EDIT_TOUCHED[$path]+changed} ]]; then
+        edit_fail "an earlier rule changed $path. Reassess it in a separate run for independent recovery"; return
+    fi
     if ! small_regular_file "$path" || ! [[ -r /etc/pam.d/$stack ]]; then
         PLAN_REASON='active authselect source is linked, unreadable or outside the supported custom profile'; return 1
     fi
@@ -7925,18 +8026,44 @@ expanded_pam_template_plan() {
     if ! expanded_pam_template_render "$path" "$mode" "$id" > "$new" || ! "$validator" "$new"; then
         PLAN_REASON='the required PAM directive is conditional, ambiguous or outside the supported direct template form'; return 1
     fi
+    if [[ $mode == nullok ]] && grep -Fq '{if not "without-nullok":nullok}' "$path" &&
+        ! expanded_pam_without_nullok_proof "$raw" "$stack" "$active"; then
+        PLAN_REASON='authselect did not prove that the vendor without-nullok feature changes only the expected options'; return 1
+    fi
     fingerprint=$(printf '%s\n%s' "$raw" "$active" | sha256sum) || return 1
-    EDIT_CONTEXT=$fingerprint
-    EDIT_DISPOSITION=pending
-    EDIT_ACTIVATION='Compare authselect test output for the active profile and features to its generated files. Keep console recovery and an administrative login. After review, use authselect apply-changes -b, then test a fresh relevant login and authselect check.'
-    EDIT_REQUIREMENTS='Confirm the profile is locally managed and a tested independent administrative access route is available. Authselect activation may regenerate PAM, NSS and dconf artifacts, so review all queued differences before activation.'
     if [[ $mode == nullok ]]; then
         option_count=$(grep -c '^# rhel8-stig .*removed the empty-password option' "$new") || return 1
-        description="Remove the literal nullok option from $option_count canonical pam_unix lines in the $stack custom template. The generated PAM stack requires activation."
+        description="Remove the nullok option from $option_count canonical pam_unix lines in the $stack custom template. The generated PAM stack requires activation."
     else
         description='Comment the original pam_pwquality requisite line and place the required control directly beneath it in the system-auth custom template. The generated PAM stack requires activation.'
     fi
-    edit_content "$path" keep "$description" "$validator" < "$new"
+    edit_content "$path" keep "$description" "$validator" < "$new" || return 1
+    EDIT_CONTEXT+="${EDIT_CONTEXT:+$'\n'}$fingerprint"
+}
+
+expanded_pam_template_include() {
+    local id=$1 raw=$2 peer stack validator
+    local PLAN_REASON
+    case $id in
+        V-244541) peer=V-268322 stack=system-auth validator=expanded_pam_system_null_validate ;;
+        V-268322) peer=V-244541 stack=password-auth validator=expanded_pam_password_null_validate ;;
+        *) return 1 ;;
+    esac
+    attended_optional_peer_ready "$id" "$peer" &&
+        expanded_pam_template_edit "$peer" "$stack" nullok "$validator" "$raw" || return 1
+    EDIT_RELATED=$peer EDIT_GROUPED=$peer
+}
+
+expanded_pam_template_plan() {
+    local id=$1 stack=$2 mode=$3 validator=$4 raw
+    if ! raw=$(expanded_auth_select_raw); then
+        PLAN_REASON='a valid locally copied active authselect custom profile is required for source-only staging'; return 1
+    fi
+    expanded_pam_template_edit "$id" "$stack" "$mode" "$validator" "$raw" || return 1
+    EDIT_DISPOSITION=pending
+    EDIT_ACTIVATION='Compare authselect test output for the active profile and features to its generated files. Keep console recovery and an administrative login. After review, use authselect apply-changes -b, then test a fresh relevant login and authselect check.'
+    EDIT_REQUIREMENTS='Confirm the profile is locally managed and a tested independent administrative access route is available. Authselect activation may regenerate PAM, NSS and dconf artifacts, so review all queued differences before activation.'
+    if [[ $mode == nullok ]]; then expanded_pam_template_include "$id" "$raw" || true; fi
 }
 
 rule_V_244541_plan() { expanded_pam_template_plan V-244541 password-auth nullok expanded_pam_password_null_validate; }
@@ -8317,8 +8444,45 @@ audit_rule_dropin_validate() {
     (( found ))
 }
 
+audit_rule_dropin_edit() {
+    local id=$1 existing=$2 profile target payload payload_rc=0
+    case $id in
+        V-274877)
+            profile=cron
+            if [[ ! -d /etc/cron.d || ! -d /var/spool/cron || -L /etc/cron.d || -L /var/spool/cron ]]; then
+                PLAN_REASON='Both standard cron paths must exist as ordinary directories to stage the watches.'; return 1
+            fi ;;
+        V-288831)
+            profile=useradd
+            if [[ ! -f /usr/sbin/useradd || ! -x /usr/sbin/useradd || -L /usr/sbin/useradd ]]; then
+                PLAN_REASON='The standard useradd executable must be a regular, executable file.'; return 1
+            fi ;;
+        *) return 1 ;;
+    esac
+    target=/etc/audit/rules.d/90-rhel8-stig-v${id#V-}.rules
+    payload=$(audit_rule_dropin_payload "$profile" "$existing") || payload_rc=$?
+    if (( payload_rc == 2 )) || [[ -z $payload && $payload_rc == 0 ]]; then
+        PLAN_REASON='The required source rules already exist. Only audit policy activation and verification remain.'; return 1
+    fi
+    if (( payload_rc != 0 )); then
+        PLAN_REASON='A source rule overlaps the controlled paths or key. Review and preserve its existing policy purpose.'; return 1
+    fi
+    if [[ -e $target || -L $target || ${EDIT_TOUCHED[$target]+changed} ]]; then
+        PLAN_REASON='The proposed dedicated audit rules file already exists or was changed in this run.'; return 1
+    fi
+    edit_content "$target" 0600 "$payload" audit_rule_dropin_validate <<< "$payload"
+}
+
+audit_rule_dropin_include() {
+    local id=$1 peer=$2 existing=$3
+    local PLAN_REASON
+    attended_optional_peer_ready "$id" "$peer" &&
+        audit_rule_dropin_edit "$peer" "$existing" || return 1
+    EDIT_RELATED=$peer EDIT_GROUPED=$peer
+}
+
 audit_rule_dropin_plan() {
-    local profile=$1 target=$2 unit sources existing payload payload_rc settings enabled
+    local id=$1 peer=$2 unit sources existing settings enabled
     local loader='argv\[\]=(/usr)?/sbin/augenrules[[:space:]]+--load([[:space:]]|;|$)'
     if ! have_tools systemctl auditctl augenrules sha256sum; then
         PLAN_REASON='The standard auditd, auditctl and augenrules tools are required to stage audit rules.'; return 1
@@ -8339,17 +8503,7 @@ audit_rule_dropin_plan() {
     if grep -Eq '^[[:space:]]*-(a|A)[[:space:]]+(never,(task|exit|exclude)|(task|exit|exclude),never)\b' <<< "$existing"; then
         PLAN_REASON='Audit suppression is present. Review whether it would override the proposed rule.'; return 1
     fi
-    payload=$(audit_rule_dropin_payload "$profile" "$existing")
-    payload_rc=$?
-    if (( payload_rc == 2 )) || [[ -z $payload && $payload_rc == 0 ]]; then
-        PLAN_REASON='The required source rules already exist. Only audit policy activation and verification remain.'; return 1
-    fi
-    if (( payload_rc != 0 )); then
-        PLAN_REASON='A source rule overlaps the controlled paths or key. Review and preserve its existing policy purpose.'; return 1
-    fi
-    if [[ -e $target || -L $target ]]; then
-        PLAN_REASON='The proposed dedicated audit rules file already exists.'; return 1
-    fi
+    audit_rule_dropin_edit "$id" "$existing" || return 1
     EDIT_CONTEXT=$(printf '%s\n' "$unit" "$enabled" "$sources" "$existing" | sha256sum) || return 1
     EDIT_DISPOSITION=pending
     if [[ $enabled == 2 ]]; then
@@ -8358,22 +8512,11 @@ audit_rule_dropin_plan() {
         EDIT_ACTIVATION='Review every queued augenrules change before the audit owner runs augenrules --load in an approved window. Check auditctl -l and the reported rule.'
     fi
     EDIT_REQUIREMENTS='Confirm this audit rules source is locally managed and the added audit events are authorized.'
-    edit_content "$target" 0600 "$payload" audit_rule_dropin_validate <<< "$payload"
+    audit_rule_dropin_include "$id" "$peer" "$existing" || true
 }
 
-rule_V_274877_plan() {
-    if [[ ! -d /etc/cron.d || ! -d /var/spool/cron || -L /etc/cron.d || -L /var/spool/cron ]]; then
-        PLAN_REASON='Both standard cron paths must exist as ordinary directories to stage the watches.'; return 1
-    fi
-    audit_rule_dropin_plan cron /etc/audit/rules.d/90-rhel8-stig-v274877.rules
-}
-
-rule_V_288831_plan() {
-    if [[ ! -f /usr/sbin/useradd || ! -x /usr/sbin/useradd || -L /usr/sbin/useradd ]]; then
-        PLAN_REASON='The standard useradd executable must be a regular, executable file.'; return 1
-    fi
-    audit_rule_dropin_plan useradd /etc/audit/rules.d/90-rhel8-stig-v288831.rules
-}
+rule_V_274877_plan() { audit_rule_dropin_plan V-274877 V-288831; }
+rule_V_288831_plan() { audit_rule_dropin_plan V-288831 V-274877; }
 
 # Only the standard temporary directories are eligible. Other public paths may
 # intentionally support cooperative ownership and deletion workflows.
@@ -11489,12 +11632,6 @@ include_ssh_scope() {
     mapfile -t SCOPE < <(printf '%s\n' "${SCOPE[@]}" | LC_ALL=C sort -u)
 }
 
-ssh_single_review() {
-    local id
-    (( ${#PREVIEW_KEY[@]} == 1 )) || return 1
-    for id in "${!PREVIEW_KEY[@]}"; do attended_ssh_id "$id"; done
-}
-
 attended_crypto_pending() {
     local dir=/etc/crypto-policies module state
     module="$dir/policies/modules/$ATTENDED_SSH_MODULE.pmod"
@@ -13565,6 +13702,10 @@ tui_resolution() {
     result=$?
     if (( result == 1 )); then return 0; elif (( result )); then return 2; fi
     if [[ $id == V-230484 ]]; then choices+=(Source 'Enter a site-approved chrony source'); fi
+    if [[ $id == V-251710 ]]; then choices+=(AIDE 'Check the existing AIDE baseline'); fi
+    if [[ $MODE == apply && ( ${PREVIEW_KEY[$id]+ready} || ${PLANNED_BY[$id]+included} ) ]]; then
+        choices+=(Plan 'Review the proposed change')
+    fi
     tui_choose "Resolve | $id" 'Choose an action or return to Findings.' "${choices[@]}"
     result=$?
     if (( result == 1 )); then return 0; elif (( result )); then return 2; fi
@@ -13585,12 +13726,13 @@ tui_resolution() {
             if (( result == 2 )); then return 2; elif (( result )); then return 0; fi
             value=$TUI_REPLY
             if ! chrony_valid_approved_server "$value"; then tui_message Resolve 'Enter a DNS hostname or IPv4 address.'; return; fi
-            tui_confirm 'Use approved source' "Reassess with $value? Review and approve any resulting plan separately." Reassess Back
-            result=$?
-            if (( result == 2 )); then return 2; elif (( result )); then return 0; fi
             previous=$CHRONY_RUN_SERVER
             CHRONY_RUN_SERVER=$value
             if ! tui_backend_refresh browse; then CHRONY_RUN_SERVER=$previous; return 2; fi ;;
+        AIDE)
+            resolution_aide_check || return 2
+            tui_message 'AIDE evidence' "$RESOLUTION_AIDE_RESULT" ;;
+        Plan) tui_implement_focused "$id" ;;
     esac
 }
 
@@ -13628,6 +13770,9 @@ tui_apply_results() {
             printf 'Recorded changes\n----------------\n' || return 2
             cat -- "$RUN_DIR/changes.txt" || return 2
             printf '\n' || return 2
+        fi
+        if [[ -s $RUN_DIR/next-steps.txt ]]; then
+            cat -- "$RUN_DIR/next-steps.txt" && printf '\n' || return 2
         fi
         printf 'Reports\n-------\n%s\n' "$RUN_DIR"
     } | tr -d '\000-\010\013-\037\177' > "$TUI_TEMP/view.txt" || return 2
@@ -13922,7 +14067,7 @@ PY
 }
 
 tui_review() {
-    local focused=${1-} result prompt action=Continue shared_ssh=0 title='Review | complete selected scope'
+    local focused=${1-} result prompt action=Continue approvals=0 title='Review | complete selected scope'
     local IMPLEMENT_DIFF=0
     if (( ! ${#TUI_SELECTED[@]} )); then
         tui_message Review 'No findings are selected. Choose findings and open Review again.' || return 2
@@ -13930,11 +14075,17 @@ tui_review() {
     fi
     if [[ $focused || $MODE == apply ]]; then IMPLEMENT_DIFF=1; fi
     tui_backend_refresh review || return 2
-    if [[ $MODE == apply ]] && ssh_single_review; then shared_ssh=1; fi
+    if [[ $MODE == apply ]]; then
+        approvals=${#PREVIEW_KEY[@]}
+        case $approvals in
+            0) action='Save report' ;;
+            1) action='Start approval' ;;
+            *) action='Start approvals' ;;
+        esac
+    fi
     if [[ $focused ]]; then
         [[ ${EFFECTIVE[$focused]+selected} ]] || return 2
         title="Implement | $focused"
-        if (( shared_ssh )); then action='Start approval'; fi
         tui_implement_preview "$focused" | tr -d '\000-\010\013-\037\177-\377' > "$TUI_TEMP/view.txt" ||
             return 2
         tui_highlighted_view "$title" "$action" preview
@@ -13942,8 +14093,6 @@ tui_review() {
     else
         if [[ $MODE == apply ]]; then
             title='Implement selected findings'
-            if (( shared_ssh )); then action='Start approval'
-            elif (( ${#PREVIEW_KEY[@]} )); then action='Start approvals'; else action='Save report'; fi
         fi
         {
             if [[ $MODE == apply ]]; then render_apply_inventory || return 2; fi
@@ -13953,16 +14102,11 @@ tui_review() {
         result=$?
     fi
     if (( result == 0 )); then
-        if (( shared_ssh )); then return 0; fi
-        if [[ $focused ]]; then
+        if (( approvals )); then return 0; fi
+        if [[ $MODE == apply ]]; then
+            prompt='Save the assessed findings and follow-up actions to a report?'
+        elif [[ $focused ]]; then
             prompt="Continue with $focused only?"$'\n''Any proposed change still needs attended approval.'
-        elif [[ $MODE == apply ]]; then
-            prompt="${#TUI_SELECTED[@]} selected | ${#PREVIEW_KEY[@]} proposed changes | $TUI_HIDDEN hidden by filters."
-            if (( ${#PREVIEW_KEY[@]} )); then
-                prompt+=$'\n''Start decisions for the proposed changes? Each still needs attended approval.'
-            else
-                prompt+=$'\n''Save the findings and follow-up actions to a report?'
-            fi
         else
             prompt="Continue with all ${#TUI_SELECTED[@]} selected findings, including $TUI_HIDDEN hidden by the current filters?"
             prompt+=$'\n''This mode only assesses and writes reports.'
@@ -14092,11 +14236,12 @@ init_results() {
 }
 
 prepare_rule_plan() {
-    local id=$1 related related_rules='' affected_rules=$1
+    local id=$1 related related_rules='' affected_rules=$1 handling=${HANDLING[$1]}
     PLAN_REASON='' PLAN_TEXT='' PLAN_SIGNATURE='' PLAN_DIFF='' PLAN_GROUP=''
     PLAN_RISK=${RISK[$id]}
     allow_rule_plan "$id" || return 1
-    case ${HANDLING[$id]} in
+    if guided_module_id "$id" && (( ! REVIEW_EACH )); then handling=attended-file; fi
+    case $handling in
         attended-module)
             PLAN_APPLIER=apply_module_plan
             module_plan "$id" || return 1
@@ -14526,8 +14671,12 @@ do_rollback() {
         fi
         case ${HANDLING[$id]} in
             attended-module)
-                [[ -e $old/$id.pre || -L $old/$id.pre ]] || continue
-                rollback=rollback_module ;;
+                if guided_module_id "$id" && [[ -e $old/$id.edits || -L $old/$id.edits ]]; then
+                    rollback=rollback_file_plan
+                else
+                    [[ -e $old/$id.pre || -L $old/$id.pre ]] || continue
+                    rollback=rollback_module
+                fi ;;
             attended-file)
                 [[ -e $old/$id.edits || -L $old/$id.edits ]] || continue
                 rollback=rollback_file_plan ;;
@@ -14572,6 +14721,66 @@ render_applied_ids() {
     done
 }
 
+render_resolution_next_steps() {
+    local id group message source
+    local -a blockers=() groups=('Boot and kernel modules' 'SSH crypto policy' 'Mounts' 'Time service' 'Desktop' 'Authentication' 'Session timeout' 'Audit rules')
+    local -a verify=(--status --fresh --resume "$RUN_ID" --output-dir "$REPORT_BASE")
+    local -A pending=()
+    for id in "${SCOPE[@]}"; do
+        resolution_supported "$id" || continue
+        case ${ACTIONS[$id]-} in
+            PENDING_ACTIVATION)
+                case $id in
+                    V-230279|V-23049[4-9]) group='Boot and kernel modules' ;;
+                    V-230251|V-230252|V-272482|V-272483) group='SSH crypto policy' ;;
+                    V-230301) group=Mounts ;;
+                    V-230484) group='Time service' ;;
+                    V-230530) group=Desktop ;;
+                    V-244541|V-268322) group=Authentication ;;
+                    V-257258) group='Session timeout' ;;
+                    V-274877|V-288831) group='Audit rules' ;;
+                    *) continue ;;
+                esac
+                pending[$group]="${pending[$group]-}$id " ;;
+            BLOCKED|MANUAL_REQUIRED|FAILED) blockers+=("$id") ;;
+            APPLIED)
+                if [[ ! ${AFTER[$id]} =~ ^(PASS|NOT_APPLICABLE)$ ]]; then blockers+=("$id"); fi ;;
+        esac
+    done
+    (( ${#pending[@]} || ${#blockers[@]} )) || return 0
+    printf 'Next steps\n----------\n' || return 1
+    for group in "${groups[@]}"; do
+        [[ ${pending[$group]+present} ]] || continue
+        case $group in
+            'Boot and kernel modules') message='Review the boot-entry, initramfs and kdump instructions for the listed findings. Coordinate one reboot after all approved changes are ready.' ;;
+            'SSH crypto policy') message='Review dependent clients and services, use the approved policy regeneration and restart steps, then test a fresh SSH connection.' ;;
+            Mounts) message='Use the approved targeted remount or reboot. Verify the active options and affected applications.' ;;
+            'Time service') message='Activate chronyd in the approved window and verify that it synchronizes to the approved source.' ;;
+            Desktop) message='Review queued dconf changes, publish the approved changes, and verify in a fresh GNOME session.' ;;
+            Authentication) message='Review the complete authselect diff, regenerate once with recovery access available, then test a fresh login.' ;;
+            'Session timeout') message='Activate the logind change in the approved window and test a fresh idle session.' ;;
+            'Audit rules') message='Review the full queued policy and activate once. Use an approved reboot when the policy is immutable, then verify loaded rules and expected events.' ;;
+        esac
+        printf '\n%s | %s\n  %s\n' "$group" "${pending[$group]% }" "$message" || return 1
+    done
+    if (( ${#blockers[@]} )); then
+        printf '\nInput, evidence, or a blocker to resolve\n' || return 1
+        for id in "${blockers[@]}"; do
+            message=${DETAIL[$id]}
+            if [[ ${ACTIONS[$id]} == BLOCKED && ${DISPLAY_PLAN[$id]-} ]]; then message=${DISPLAY_PLAN[$id]}; fi
+            printf '  %s | %s\n' "$id" "$message" || return 1
+        done
+        printf '%s\n' 'Open Resolve for the available in-tool actions and the exact prerequisites.' || return 1
+    fi
+    if (( ${#pending[@]} )); then
+        if [[ ${CONFIG_FILE-} ]]; then verify+=(--config "$CONFIG_FILE"); fi
+        source=${CHRONY_RUN_SERVER:-${CHRONY_APPROVED_SERVER-}}
+        if [[ $source ]]; then verify+=(--approved-time-source "$source"); fi
+        printf '\nRecheck this run after activation\n ' || return 1
+        printf ' %q' "$SCRIPT_PATH" "${verify[@]}" && printf '\n'
+    fi
+}
+
 finalize_run() {
     local id result_file=$RUN_DIR/summary.txt applied=0 blocked_count=0
     UNRESOLVED=0 PENDING_COUNT=0 SKIPPED_COUNT=0
@@ -14591,6 +14800,9 @@ finalize_run() {
     } > "$result_file" || return 70
     if [[ $MODE == diff ]]; then cp -- "$result_file" "$RUN_DIR/diff.txt" || return 70; fi
     write_admin_actions | tr -d '\000-\010\013-\037\177' > "$RUN_DIR/admin-actions.txt" || return 70
+    if [[ $MODE == apply ]]; then
+        render_resolution_next_steps | tr -d '\000-\010\013-\037\177' > "$RUN_DIR/next-steps.txt" || return 70
+    fi
     case $FORMAT in
         json) result_file=$RUN_DIR/results.json; report_json > "$result_file" || return 70 ;;
         csv) result_file=$RUN_DIR/results.csv; report_csv > "$result_file" || return 70 ;;
@@ -14601,6 +14813,7 @@ finalize_run() {
             "${#SCOPE[@]}" "$applied" "$UNRESOLVED" "$blocked_count" "$PENDING_COUNT" "$SKIPPED_COUNT" || return 70
         if [[ $MODE == apply ]]; then render_applied_ids || return 70; fi
         printf 'Full results %s\nAdministrator actions %s\n' "$result_file" "$RUN_DIR/admin-actions.txt" || return 70
+        if [[ -s $RUN_DIR/next-steps.txt ]]; then printf 'Next steps %s\n' "$RUN_DIR/next-steps.txt" || return 70; fi
         if [[ -n ${BACKUP_RUN-} ]]; then printf 'Backups %s\n' "$BACKUP_RUN" || return 70; fi
     elif [[ $FORMAT == text ]]; then
         display_terminal_text 1 < "$result_file" || return 70
@@ -17401,6 +17614,124 @@ resolution_note_set() {
     if [[ $note ]]; then RESOLUTION_NOTES[$id]=$note; else unset 'RESOLUTION_NOTES[$id]'; fi
 }
 
+resolution_aide_inventory() {
+    local package='' path
+    if have_tools rpm timeout; then
+        package=$(timeout --kill-after=2s 8s rpm -q --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' aide 2>/dev/null) || package=''
+    fi
+    if [[ $package =~ ^aide-[A-Za-z0-9_.+-]+$ ]]; then printf 'Installed package: %s\n' "$package"
+    else printf '%s\n' 'Installed AIDE package: unavailable or not detected'; fi
+    for path in /etc/aide.conf /var/lib/aide/aide.db.gz; do
+        if [[ -f $path && ! -L $path && $(realpath -e -- "$path" 2>/dev/null) == "$path" ]]; then
+            stat -c '%n | owner %u | mode %a | size %s bytes | modified %y' -- "$path" 2>/dev/null ||
+                printf '%s | metadata unavailable\n' "$path"
+        else
+            printf '%s | absent, linked, or unavailable\n' "$path"
+        fi
+    done
+}
+
+resolution_aide_path() {
+    local path=$1 owner mode
+    [[ -s $path && -f $path && ! -L $path && -r $path &&
+       $(realpath -e -- "$path") == "$path" ]] && local_filesystem "$path" || return 1
+    while [[ $path != / ]]; do
+        read -r owner mode < <(stat -c '%u %a' -- "$path" 2>/dev/null) || return 1
+        [[ $owner == 0 && $mode =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 022) == 0 )) || return 1
+        path=${path%/*}
+        path=${path:-/}
+    done
+}
+
+# Verify both packaged inputs and keep reporting inside a private temporary
+# directory. The vendor default otherwise also writes /var/log/aide/aide.log.
+resolution_aide_scan() (
+    local config=/etc/aide.conf program=/usr/sbin/aide baseline=/var/lib/aide/aide.db.gz
+    local package manifest digest config_digest scratch before code=0 counts checked
+    if (( EUID != 0 )); then
+        printf '%s\n' 'Run the tool as root to read the protected AIDE baseline and files covered by its checks.'
+        return
+    fi
+    if ! have_tools rpm timeout nice env awk grep stat realpath findmnt sha256sum mktemp cp rm rmdir date ||
+       ! package=$(timeout --kill-after=2s 8s rpm -q --qf '%{NAME}|%{VERSION}-%{RELEASE}|%{VENDOR}\n' aide 2>/dev/null) ||
+       [[ ! $package =~ ^aide\|0\.16-[a-zA-Z0-9_.+-]*\.el8[a-zA-Z0-9_.+-]*\|Red\ Hat,\ Inc\.$ ]]; then
+        printf '%s\n' 'The check needs the Red Hat RHEL 8 AIDE 0.16 package and local verification tools.'
+        return
+    fi
+    if ! resolution_aide_path "$program" || ! resolution_aide_path "$config" ||
+       ! text_input_file "$config" || [[ ! -x $program ]] ||
+       ! manifest=$(timeout --kill-after=2s 8s rpm -q --qf '[%{FILENAMES}|%{FILEDIGESTS}\n]' aide 2>/dev/null); then
+        printf '%s\n' 'The packaged AIDE executable or configuration is unavailable or outside a protected local path.'
+        return
+    fi
+    config_digest=$(awk -F'|' -v path="$config" '$1 == path {print $2}' <<< "$manifest") || return 1
+    digest=$(awk -F'|' -v path="$program" '$1 == path {print $2}' <<< "$manifest") || return 1
+    if [[ ! $digest =~ ^[0-9a-f]{64}$ || ! $config_digest =~ ^[0-9a-f]{64}$ ||
+          $(sha256_file "$program") != "$digest" || $(sha256_file "$config") != "$config_digest" ]]; then
+        printf '%s\n' 'AIDE or its configuration differs from the installed RPM. Use the approved integrity-tool report for this site configuration.'
+        return
+    fi
+    if ! resolution_aide_path "$baseline" ||
+       ! before=$(stat -c '%d:%i:%u:%a:%s:%y:%z' -- "$baseline" 2>/dev/null); then
+        printf '%s\n' 'The default AIDE baseline is missing, unreadable, or outside a protected local path.'
+        return
+    fi
+    umask 077
+    scratch=$(mktemp -d -- /var/tmp/rhel8-stig-aide.XXXXXXXX) || return 1
+    trap 'rm -f -- "$scratch/vendor.conf" "$scratch/check.conf" "$scratch/result"; rmdir -- "$scratch"' EXIT
+    cp -- "$config" "$scratch/vendor.conf" &&
+        [[ $(sha256_file "$scratch/vendor.conf") == "$config_digest" ]] || return 1
+    if ! awk '
+        /^[[:space:]]*report_url[[:space:]]*=/ {next}
+        /^[[:space:]]*@@define[[:blank:]]+DBDIR[[:blank:]]+\/var\/lib\/aide[[:blank:]]*$/ {directory++; print; next}
+        /^[[:space:]]*@@define[[:blank:]]+LOGDIR[[:blank:]]+\/var\/log\/aide[[:blank:]]*$/ {print; next}
+        /^[[:space:]]*database[[:blank:]]*=[[:blank:]]*file:@@\{DBDIR\}\/aide\.db\.gz[[:blank:]]*$/ {database++; print; next}
+        /^[[:space:]]*@@|^[[:space:]]*database(_in)?[[:blank:]]*=/ {invalid=1}
+        {print}
+        END {
+            if (invalid || directory != 1 || database != 1) exit 1
+            print "\nreport_url=stdout"
+        }
+    ' "$scratch/vendor.conf" > "$scratch/check.conf"; then
+        printf '%s\n' 'The packaged AIDE configuration does not use the supported default local baseline. Use the approved integrity-tool report.'
+        return
+    fi
+    checked=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || return 1
+    (ulimit -c 0 && ulimit -f 4096 &&
+        timeout --kill-after=5s 120s nice -n 10 env -i PATH=/usr/sbin:/usr/bin LC_ALL=C \
+            "$program" "--config=$scratch/check.conf" --check) \
+        > "$scratch/result" 2>&1 || code=$?
+    if [[ $(stat -c '%d:%i:%u:%a:%s:%y:%z' -- "$baseline" 2>/dev/null) != "$before" ||
+          $(sha256_file "$config") != "$config_digest" || $(sha256_file "$program") != "$digest" ]]; then
+        printf '%s | %s\n' "$checked" 'The configuration, executable, or baseline changed during the check. Gather evidence again.'
+    elif (( code == 0 )) && grep -Fq 'AIDE found NO differences between database and filesystem' "$scratch/result"; then
+        printf '%s | %s\n' "$checked" 'AIDE reported no differences against the existing baseline. Confirm baseline provenance and coverage.'
+    elif (( code >= 1 && code <= 7 )) &&
+         counts=$(awk '
+            /^Summary:$/ {summary=1; next}
+            summary && /^-{10,}$/ {exit}
+            summary && /^[[:blank:]]*Added entries:[[:blank:]]*[0-9]{1,12}[[:blank:]]*$/ {added=$NF}
+            summary && /^[[:blank:]]*Removed entries:[[:blank:]]*[0-9]{1,12}[[:blank:]]*$/ {removed=$NF}
+            summary && /^[[:blank:]]*Changed entries:[[:blank:]]*[0-9]{1,12}[[:blank:]]*$/ {changed=$NF}
+            END {
+                if (added == "" || removed == "" || changed == "" || added+removed+changed == 0) exit 1
+                printf "Added %s | Removed %s | Changed %s", added, removed, changed
+            }
+        ' "$scratch/result"); then
+        printf '%s | %s. Review the changes with the integrity administrator.\n' "$checked" "$counts"
+    elif (( code == 124 || code == 137 )); then
+        printf '%s | %s\n' "$checked" 'The two-minute AIDE check did not finish. Use the approved scheduled check result.'
+    else
+        printf '%s | AIDE could not verify the existing baseline (exit %s). Review the approved integrity-tool result.\n' "$checked" "$code"
+    fi
+)
+
+resolution_aide_check() {
+    if ! RESOLUTION_AIDE_RESULT=$(resolution_aide_scan); then
+        RESOLUTION_AIDE_RESULT='The protected AIDE evidence check could not be prepared.'
+    fi
+}
+
 resolution_text() {
     local id=$1
     resolution_supported "$id" || return 1
@@ -17412,16 +17743,8 @@ resolution_text() {
         printf '%s\n\n' "${DISPLAY_PLAN[$id]}" || return 1
     fi
     if [[ $id == V-251710 ]]; then
-        printf 'Default AIDE paths (local observations)\n' || return 1
-        local path
-        for path in /etc/aide.conf /var/lib/aide/aide.db.gz; do
-            if [[ -f $path && ! -L $path && $(realpath -e -- "$path" 2>/dev/null) == "$path" ]]; then
-                stat -c '%n | owner %u | mode %a | modified %y' -- "$path" 2>/dev/null ||
-                    printf '%s | metadata unavailable\n' "$path"
-            else
-                printf '%s | absent, linked, or unavailable\n' "$path"
-            fi
-        done
+        printf 'Default AIDE paths (local observations)\n' && resolution_aide_inventory || return 1
+        if [[ ${RESOLUTION_AIDE_RESULT-} ]]; then printf '\nRead-only check result\n%s\n' "$RESOLUTION_AIDE_RESULT" || return 1; fi
         printf '\n' || return 1
     fi
     rule_resolution_guidance "$id" || return 1
@@ -17499,15 +17822,15 @@ rule_resolution_guidance() {
             ;;
         V-244541|V-268322)
             if [[ $id == V-244541 ]]; then subject=password-auth; else subject=system-auth; fi
-            method="Remove literal nullok options from the supported pam_unix lines in the active custom $subject template."
+            method="Remove the nullok option from supported pam_unix lines in the active custom $subject template. The tool validates eligible literal options and the stock authselect conditional."
             prerequisites="The active authselect profile needs an editable copied $subject template, ordinary supported PAM syntax, and generated files in sync with the source. Use the authoritative template for managed or alternate layouts."
             decision='Confirm local profile ownership and independent administrative access. Review the proposed generation and other pending authselect changes before activation.'
             verification="After approved authselect regeneration, verify authselect check, the effective $subject stack and a fresh relevant login."
             ;;
         V-251710)
-            method='Check whether AIDE is installed and present the observation for administrator review.'
-            prerequisites='AIDE or an approved alternative must cover the required security functions. Package installation, baseline creation, and running the tool can each be scripted with site-approved inputs and a trusted reference state.'
-            decision='Provide the approved integrity tool, baseline provenance and coverage evidence, and a recent integrity-check result. The package check establishes tool presence only.'
+            method='Show the default AIDE package and baseline metadata. Run the optional read-only AIDE check to collect a time-stamped result against the existing database.'
+            prerequisites='The in-tool check needs root access and the verified Red Hat AIDE executable, stock configuration, and protected local default baseline. For customized AIDE or an alternative, use the approved integrity-tool result.'
+            decision='Confirm the baseline provenance and security-function coverage. Record a reference to that approval and any externally gathered evidence.'
             verification='Review the check against the trusted database, investigate detected changes, and record evidence for the applicable security functions.'
             ;;
         V-257258)
