@@ -206,6 +206,40 @@ urwid_browse() {
     urwid_state "$reset"
 }
 
+# Review uses the transaction engine's live result maps. Keep the earlier
+# browse results available for navigation and subsequent Details requests.
+readonly -a URWID_BROWSE_FIELDS=(EFFECTIVE TUI_SELECTED BEFORE AFTER ACTIONS DETAIL DISPLAY_PLAN DISPLAY_DIFF
+    PLANNED_BY GROUPED_BY PREVIEW_KEY PREVIEW_RISK PREVIEW_GROUP ASSESSMENT_SOURCE ASSESSMENT_AT)
+
+urwid_hold_browse() {
+    if (( ${#URWID_BROWSE_SCOPE[@]} )); then return 0; fi
+    local field id
+    URWID_BROWSE_SCOPE=("${SCOPE[@]}")
+    for field in "${URWID_BROWSE_FIELDS[@]}"; do
+        local -n result_map="$field"
+        for id in "${!result_map[@]}"; do
+            URWID_BROWSE_DATA["$field:$id"]=${result_map[$id]}
+        done
+    done
+}
+
+urwid_restore_browse() {
+    if (( ! ${#URWID_BROWSE_SCOPE[@]} )); then return 0; fi
+    local field id key
+    SCOPE=("${URWID_BROWSE_SCOPE[@]}")
+    for field in "${URWID_BROWSE_FIELDS[@]}"; do
+        local -n result_map="$field"
+        result_map=()
+        for id in "${SCOPE[@]}"; do
+            key=$field:$id
+            if [[ ${URWID_BROWSE_DATA[$key]+saved} ]]; then
+                result_map[$id]=${URWID_BROWSE_DATA[$key]}
+            fi
+        done
+    done
+    URWID_BROWSE_SCOPE=() URWID_BROWSE_DATA=() URWID_REVIEW_TOKEN=''
+}
+
 urwid_modal_json() {
     local kind=$1 title=$2 prompt=$3 yes=$4 no=$5 initial=$6 spacer=''
     shift 6
@@ -351,12 +385,18 @@ urwid_send_review() {
         urwid_event error 'The site configuration changed. Press F7 for Run settings, then rebuild the preview.'
         return
     fi
-    if ! urwid_set_selected "$csv" ||
-       [[ -n $focused && ( $focused != "$csv" || ! ${TUI_ALLOWED[$focused]+allowed} ) ]]; then
+    if (( ! URWID_ASSESSED )) || [[ -n $focused && $focused != "$csv" ]]; then
+        urwid_event error 'Select one or more available findings. An individual review requires exactly its focused ID.'
+        return
+    fi
+    urwid_hold_browse
+    if ! urwid_set_selected "$csv"; then
+        urwid_restore_browse
         urwid_event error 'Select one or more available findings. An individual review requires exactly its focused ID.'
         return
     fi
     if ! tui_backend_refresh review || (( ! ${#SCOPE[@]} )); then
+        urwid_restore_browse
         urwid_event error 'Could not reassess the requested scope. Refresh it or reimport the source checklist.'
         return
     fi
@@ -579,8 +619,10 @@ urwid_dispatch() {
     shift
     local scope_result URWID_SCOPE_MESSAGE=''
     if [[ $command != accept && $command != detail ]]; then URWID_REVIEW_TOKEN=''; fi
+    if [[ $command != accept && $command != review ]]; then urwid_restore_browse; fi
     case $command:$# in
-        scan:0|back:0)
+        back:0) printf '{"type":"browse"}\n' ;;
+        scan:0)
             urwid_browse || urwid_event error 'Assessment refresh stopped. Check the scope and source checklist.' ;;
         review:2) urwid_send_review "$1" "$2" ;;
         detail:1) urwid_send_detail "$1" ;;
@@ -616,8 +658,8 @@ tui_run() {
     local result=2 action_status read_fd write_fd diagnostic
     local URWID_REVIEW_TOKEN='' URWID_REVIEW_SEQ=0 URWID_RISK_CAP=$MAX_RISK URWID_DEFER_CAP=$DEFER
     local URWID_ASSESSED=0
-    local -a URWID_FIELDS=()
-    local -A TUI_ALLOWED=()
+    local -a URWID_FIELDS=() URWID_BROWSE_SCOPE=()
+    local -A TUI_ALLOWED=() URWID_BROWSE_DATA=()
     tui_index || return 2
     URWID_TTY_STATE=$(stty -g <&"$TUI_FD") || return 2
     coproc URWID_PIPE {

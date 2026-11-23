@@ -10,7 +10,7 @@ URWID_SOURCE = ROOT / "src" / "urwid"
 BACKEND = ROOT / "src" / "classic" / "rhel8-stig.sh"
 BACKEND_SHA256 = "c346ad42f744f76833e0c87586a70278ee42600402e5601ff1158c92d1c9134a"
 CLASSIC_VERSION = "0.5.7-dev"
-VERSION = "0.6.6-urwid-dev"
+VERSION = "0.6.7-urwid-dev"
 OUTPUT = ROOT / "dist" / "rhel8-stig-urwid.sh"
 CLASSIC_OUTPUT = OUTPUT.with_name(BACKEND.name)
 DELIMITER = "__RHEL_STIG_EMBEDDED_URWID__"
@@ -68,13 +68,15 @@ def build():
     shell = replace_once(shell, "# rhel8-stig.sh — Attended",
                          "# rhel8-stig-urwid.sh — Attended")
     shell = replace_once(shell, "# {} | 2026-11-23 | Simplify run settings and reports.".format(CLASSIC_VERSION),
-                         "# {} | 2026-11-23 | Simplify run settings and reports.".format(VERSION))
+                         "# {} | 2026-11-23 | Return to Findings without reassessment.".format(VERSION))
     shell = replace_once(shell, "readonly SCRIPT_VERSION=" + CLASSIC_VERSION,
                          "readonly SCRIPT_VERSION=" + VERSION)
     shell = replace_once(shell, "readonly ASSESSMENT_CACHE_DEFAULT=1",
                          "readonly ASSESSMENT_CACHE_DEFAULT=0")
     classic_heading = CLASSIC_VERSION + " (2026-11-23)"
     shell = replace_once(shell, classic_heading, VERSION + """ (2026-11-23)
+  Restore the existing Findings list when leaving a preview.
+0.6.6-urwid-dev (2026-11-23)
   Remove the Change ticket field and its handoff from the workbench.
 0.6.5-urwid-dev (2026-11-23)
   Fix GNU awk parsing for UEFI GRUB password and GNOME logout checks.

@@ -612,7 +612,7 @@ class Workbench:
                 self.sort_descending = False
                 self.filters = {key: "" for key in self.filters}
             self.feedback = {
-                "back": "", "scan": "Assessment refreshed.", "settings": "Run settings updated.",
+                "scan": "Assessment refreshed.", "settings": "Run settings updated.",
                 "import": "Checklist imported. Review the proposed scope.",
                 "load": "Saved selection loaded.",
             }.get(completed, "")
@@ -621,6 +621,10 @@ class Workbench:
                 self.show_settings()
             else:
                 self.show_findings()
+        elif kind == "browse":
+            self.close_modal()
+            self.feedback = ""
+            self.show_findings()
         elif kind == "review":
             self.close_modal()
             self.feedback = ""
@@ -822,10 +826,12 @@ class Workbench:
     def open_findings_from_settings(self):
         values = self.settings_values()
         if values == self.initial_settings and not self.context.get("site_config"):
-            if self.context.get("assessed", True) and not self.settings_after_review:
-                self.show_findings()
-            else:
+            if not self.context.get("assessed", True):
                 self.request("scan")
+            elif self.settings_after_review:
+                self.return_from_review()
+            else:
+                self.show_findings()
         else:
             self.save_settings()
 
@@ -1695,6 +1701,6 @@ class Workbench:
             elif self.page == "settings" and not self.context.get("assessed", True):
                 self.confirm_exit()
             elif self.page == "settings" and self.settings_after_review:
-                self.request("back")
+                self.return_from_review()
             elif self.page in ("settings", "details"):
                 self.show_findings()

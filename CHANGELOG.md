@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.7-urwid-dev
+
+- Return from a plan or diff to the existing Findings list. Back preserves the selection, filters, sort order, and focused finding. **F8** still reassesses the available scope, and opening a new preview checks the requested findings.
+
 ## 0.6.6-urwid-dev and 0.5.7-dev
 
 - Remove the change-ticket option and report field from both editions. Remove the ticket field and handoff view from Urwid. Saved reports from earlier editions remain readable.

@@ -13,6 +13,7 @@ MAX_COMMAND = 32768  # Payload bytes, matching the Bash command reader.
 MAX_EVENT = 4 * 1024 * 1024
 EVENT_FIELDS = {
     "state": {"context": dict, "reset_selection": bool, "rows": list},
+    "browse": {},
     "review": {"token": str, "focused": str, "text": str, "rows": list},
     "detail": {"id": str, "title": str, "text": str},
     "progress": {"complete": int, "count": int, "id": str},
