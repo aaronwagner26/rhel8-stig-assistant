@@ -431,6 +431,108 @@ urwid_send_detail() {
     printf '}\n'
 }
 
+urwid_resolution_field() {
+    printf '{'
+    urwid_json_fields key "$1" label "$2" prompt "$3" value "$4"
+    printf '}'
+}
+
+urwid_send_resolution() {
+    local id=$1 body
+    if ! urwid_allowed_id "$id" || [[ ! ${AFTER[$id]+assessed} ]]; then
+        urwid_event error 'Assess this finding within the available scope before opening Resolve.'
+        return
+    fi
+    if resolution_supported "$id"; then body=$(resolution_text "$id") || return 2
+    else body=$(render_admin_action "$id") || return 2; fi
+    printf '{'
+    urwid_json_fields type resolution id "$id" title "${TITLE[$id]}" text "$body"
+    printf ',"inputs":['
+    if resolution_supported "$id"; then
+        urwid_resolution_field evidence-note 'Record evidence reference' \
+            'Enter a non-sensitive reference to approved evidence. The note is saved with this finding in the run report.' \
+            "${RESOLUTION_NOTES[$id]-}"
+        if [[ $id == V-230484 ]]; then
+            printf ','
+            urwid_resolution_field approved-time-source 'Set approved time source' \
+                'Enter the DNS hostname or IPv4 address your site approved. The tool will reassess before proposing any edit.' \
+                "${CHRONY_RUN_SERVER:-${CHRONY_APPROVED_SERVER-}}"
+        fi
+    fi
+    printf ']'
+    if resolution_dependency_available "$id"; then
+        printf ',"dependency":{'
+        urwid_json_fields id V-288829 title "${TITLE[V-288829]}" reason \
+            'The proposed SSH crypto-policy change also affects OpenSSL. Add this finding only if you want to review that broader change. A new preview and approvals will follow.'
+        printf '}'
+    fi
+    printf '}\n'
+}
+
+urwid_resolution_reassess() {
+    local kind=$1 value=$2 csv=$3 previous_server=${CHRONY_RUN_SERVER-}
+    local allowed=${TUI_ALLOWED[V-288829]+yes} requested=${REQUESTED[V-288829]+yes}
+    local -a previous_ids=("${TUI_IDS[@]}")
+    if ! urwid_site_snapshot_matches || ! verify_selection_source; then
+        urwid_event error 'The site configuration or checklist changed. Recheck the source before proceeding.'
+        return
+    fi
+    urwid_restore_browse
+    URWID_REVIEW_TOKEN=''
+    urwid_hold_browse
+    if [[ $csv ]]; then
+        if ! urwid_set_selected "$csv"; then
+            urwid_restore_browse
+            urwid_event error 'Select only findings currently available in this session.'
+            return
+        fi
+    else
+        TUI_SELECTED=()
+    fi
+    if [[ $kind == source ]]; then CHRONY_RUN_SERVER=$value
+    else resolution_enroll_openssl; fi
+    if ! tui_backend_refresh browse; then
+        CHRONY_RUN_SERVER=$previous_server
+        TUI_IDS=("${previous_ids[@]}")
+        if [[ ! $allowed ]]; then unset 'TUI_ALLOWED[V-288829]'; fi
+        if [[ ! $requested ]]; then unset 'REQUESTED[V-288829]'; fi
+        urwid_restore_browse
+        urwid_event error 'Reassessment could not finish. The previous settings and scope were restored.'
+        return
+    fi
+    URWID_BROWSE_SCOPE=() URWID_BROWSE_DATA=()
+    urwid_state true
+}
+
+urwid_resolution_input() {
+    local id=$1 key=$2 value=$3 csv=$4
+    if ! urwid_allowed_id "$id" || [[ ! ${AFTER[$id]+assessed} ]]; then
+        urwid_event error 'Choose an assessed finding in the current view.'
+        return
+    fi
+    case $key in
+        evidence-note)
+            if resolution_note_set "$id" "$value"; then urwid_send_resolution "$id"
+            else urwid_event error 'Use at most 512 bytes and omit control characters.'; fi ;;
+        approved-time-source)
+            if [[ $id == V-230484 ]] && chrony_valid_approved_server "$value"; then
+                urwid_resolution_reassess source "$value" "$csv"
+            else
+                urwid_event error 'Use a valid site-approved DNS hostname or IPv4 address for V-230484.'
+            fi ;;
+        *) urwid_event error 'This finding has no input with that name.' ;;
+    esac
+}
+
+urwid_resolution_scope() {
+    local id=$1 target=$2 csv=$3
+    if [[ $target != V-288829 ]] || ! urwid_allowed_id "$id" || ! resolution_dependency_available "$id"; then
+        urwid_event error 'This preview does not offer that scope change. Review the finding again.'
+        return
+    fi
+    urwid_resolution_reassess scope '' "$csv"
+}
+
 urwid_prepare_scope() {
     local action=$1 path=$2 result
     local URWID_INLINE_PATH=$path URWID_LOAD_ACCEPTED=0 URWID_CAPTURE_MESSAGE=1
@@ -521,7 +623,8 @@ urwid_set_settings() {
     local previous_mode=$MODE previous_risk=$MAX_RISK previous_defer=$DEFER
     local previous_format=$FORMAT previous_group=$REPORT_GROUP_BY previous_config=$CONFIG_FILE
     local previous_reports=$REPORT_BASE previous_backups=$BACKUP_BASE
-    local new_managed new_alternates previous_managed=$MODPROBE_MANAGED previous_alternates=$GPGCHECK_ALTERNATE_REPOS
+    local new_managed new_alternates new_chrony previous_managed=$MODPROBE_MANAGED previous_alternates=$GPGCHECK_ALTERNATE_REPOS
+    local previous_chrony=${CHRONY_APPROVED_SERVER-}
     local result URWID_SCOPE_MESSAGE='' report_status backup_status='Only used during Apply or Rollback.'
     local site_data site_status='Using built-in site defaults.'
     local report_ok=1 backup_ok=1
@@ -559,7 +662,7 @@ urwid_set_settings() {
         else urwid_event error 'Could not read the site file. Use the documented settings in a small local text file.'; fi
         return
     fi
-    if ! IFS='|' read -r new_managed new_alternates <<< "$site_data"; then
+    if ! IFS='|' read -r new_managed new_alternates new_chrony <<< "$site_data"; then
         urwid_event error 'Could not decode the validated site settings.'
         return
     fi
@@ -568,7 +671,7 @@ urwid_set_settings() {
     if [[ $action == check ]]; then
         if [[ -n $site ]]; then
             site_status='Site file validated for this assessment.'
-            if [[ $site_data != "$MODPROBE_MANAGED|$GPGCHECK_ALTERNATE_REPOS" ]]; then
+            if [[ $site_data != "$MODPROBE_MANAGED|$GPGCHECK_ALTERNATE_REPOS|${CHRONY_APPROVED_SERVER-}" ]]; then
                 site_status='Site settings differ from the current session. Findings will reassess with the edited file.'
             fi
         fi
@@ -586,13 +689,13 @@ urwid_set_settings() {
     fi
     MODE=$mode MAX_RISK=$risk DEFER=$defer FORMAT=$format
     REPORT_GROUP_BY=$group CONFIG_FILE=$site REPORT_BASE=$reports BACKUP_BASE=$backups
-    MODPROBE_MANAGED=$new_managed GPGCHECK_ALTERNATE_REPOS=$new_alternates
+    MODPROBE_MANAGED=$new_managed GPGCHECK_ALTERNATE_REPOS=$new_alternates CHRONY_APPROVED_SERVER=$new_chrony
     urwid_prepare_scope "$action" "$path"
     result=$?
     if (( result != 0 )); then
         MODE=$previous_mode MAX_RISK=$previous_risk DEFER=$previous_defer FORMAT=$previous_format
         REPORT_GROUP_BY=$previous_group CONFIG_FILE=$previous_config REPORT_BASE=$previous_reports BACKUP_BASE=$previous_backups
-        MODPROBE_MANAGED=$previous_managed GPGCHECK_ALTERNATE_REPOS=$previous_alternates
+        MODPROBE_MANAGED=$previous_managed GPGCHECK_ALTERNATE_REPOS=$previous_alternates CHRONY_APPROVED_SERVER=$previous_chrony
     fi
     urwid_scope_response "$action" "$result" "$URWID_SCOPE_MESSAGE"
 }
@@ -621,6 +724,11 @@ urwid_dispatch() {
     local command=$1
     shift
     local scope_result URWID_SCOPE_MESSAGE=''
+    case $command:$# in
+        resolve:1) urwid_send_resolution "$1"; return ;;
+        resolve-input:4) urwid_resolution_input "$@"; return ;;
+        resolve-scope:3) urwid_resolution_scope "$@"; return ;;
+    esac
     if [[ $command != accept && $command != detail ]]; then URWID_REVIEW_TOKEN=''; fi
     if [[ $command != accept && $command != review ]]; then urwid_restore_browse; fi
     case $command:$# in

@@ -78,23 +78,24 @@ urwid_approve_change() {
 
 urwid_site_settings_digest() {
     local digest
-    digest=$(printf '%s\0' 'effective-site-settings-v1' "$MODPROBE_MANAGED" "$GPGCHECK_ALTERNATE_REPOS" |
+    digest=$(printf '%s\0' 'effective-site-settings-v2' "$MODPROBE_MANAGED" "$GPGCHECK_ALTERNATE_REPOS" \
+        "${CHRONY_APPROVED_SERVER-}" "${CHRONY_RUN_SERVER-}" |
         sha256sum) || return 1
     printf '%s' "${digest%% *}"
 }
 
 urwid_read_site_snapshot() (
     local site=$1
-    MODPROBE_MANAGED=unknown GPGCHECK_ALTERNATE_REPOS=''
+    MODPROBE_MANAGED=unknown GPGCHECK_ALTERNATE_REPOS='' CHRONY_APPROVED_SERVER=''
     if [[ -n $site ]]; then read_site_config "$site" || return; fi
-    printf '%s|%s\n' "$MODPROBE_MANAGED" "$GPGCHECK_ALTERNATE_REPOS"
+    printf '%s|%s|%s\n' "$MODPROBE_MANAGED" "$GPGCHECK_ALTERNATE_REPOS" "$CHRONY_APPROVED_SERVER"
 )
 
 urwid_site_snapshot_matches() {
     local recorded
     [[ -n ${CONFIG_FILE-} ]] || return 0
     recorded=$(urwid_read_site_snapshot "$CONFIG_FILE") || return 1
-    [[ $recorded == "$MODPROBE_MANAGED|$GPGCHECK_ALTERNATE_REPOS" ]]
+    [[ $recorded == "$MODPROBE_MANAGED|$GPGCHECK_ALTERNATE_REPOS|${CHRONY_APPROVED_SERVER-}" ]]
 }
 
 urwid_set_recheck_args() {
@@ -105,6 +106,7 @@ urwid_set_recheck_args() {
         digest=$(urwid_site_settings_digest) || return 1
         URWID_RECHECK_ARGS+=(--config "$site" --expect-site-settings "$digest")
     fi
+    if [[ ${CHRONY_RUN_SERVER-} ]]; then URWID_RECHECK_ARGS+=(--approved-time-source "$CHRONY_RUN_SERVER"); fi
     if (( DEFER )); then URWID_RECHECK_ARGS+=(--defer-service-actions); fi
     if [[ $REPORT_GROUP_BY == result ]]; then URWID_RECHECK_ARGS+=(--group-by result); fi
     return 0

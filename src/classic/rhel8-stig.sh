@@ -1,6 +1,6 @@
 #!/bin/bash -p
 # rhel8-stig.sh — Attended DISA RHEL 8 assessment and remediation utility.
-# 0.5.8-dev | 2026-11-23 | Clear batch review and audit previews.
+# 0.5.9-dev | 2026-11-23 | Guided resolution for selected findings.
 # Target: genuine RHEL 8.10 x86_64 with systemd. Boot behavior needs guest validation.
 # Baseline: DISA RHEL 8 STIG Version 2 Release 9 (Sunset, 2026-10-05).
 # Archive: U_RHEL_8_V2R9_STIG.zip
@@ -8,7 +8,7 @@
 #
 # 1. Metadata, compatibility, and change history
 
-readonly SCRIPT_VERSION=0.5.8-dev
+readonly SCRIPT_VERSION=0.5.9-dev
 readonly BASELINE='RHEL 8 STIG V2R9 (Sunset)'
 readonly ARCHIVE_SHA256=620bdff4d4a5b07b58817297dd5255a3f8f981a7227405c07b098588fe55cdee
 readonly ARCHIVE_URL=https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_RHEL_8_V2R9_STIG.zip
@@ -16,6 +16,9 @@ readonly ASSESSMENT_CACHE_DEFAULT=1
 
 changelog() {
     cat <<'EOF'
+0.5.9-dev (2026-11-23)
+  Guide resolution for 22 findings. Collect approved time sources and
+  evidence references, and review the OpenSSL dependency when required.
 0.5.8-dev (2026-11-23)
   Separate batch and individual implementation. Show grouped outcomes and
   the exact proposed additions for authored audit rule files.
@@ -100,6 +103,8 @@ Options for run modes:
   --skip V-ID[,V-ID...]          Exclude IDs; may be repeated. Skip takes precedence.
   --config FILE                  Read site data such as MODPROBE_MANAGED=yes|no and
                                  GPGCHECK_ALTERNATE_REPOS=repo1,repo2.
+  --approved-time-source HOST    Use this site-approved hostname or IPv4 address
+                                 when reviewing V-230484.
   --max-risk low|medium|high     Maximum eligible operational risk (default high).
   --review-each                  Ask about each --apply operation individually.
   --defer-service-actions        Allow only changes with safe deferred activation.
@@ -148,9 +153,12 @@ init_options() {
     GUI=0 REVIEW_EACH=0 IMPLEMENT_DIFF=0 FORCE_FRESH=0 CKL_FILE='' CKL_PATH='' CKL_SHA256='' CKL_SECTION_OPT='' CKL_HOST_ACK=''
     CKL_UI_SUMMARY='' CKL_ACK_RECORD='' SELECTION_WORK='' TUI_SCANNING=0
     CKL_RESUME_PATH='' CKL_RESUME_SHA256='' CKL_RESUME_SECTION=''
+    CHRONY_RUN_SERVER=''
+    declare -gA RESOLUTION_NOTES=()
     declare -gA CKL_MAPPED=() TUI_SELECTED=()
     declare -ga TUI_IDS=()
     REPORT_BASE="/var/tmp/rhel8-stig-$EUID" BACKUP_BASE=/var/lib/rhel8-stig/backups
+    CHRONY_APPROVED_SERVER=''
     MODPROBE_MANAGED=unknown GPGCHECK_ALTERNATE_REPOS=''
     declare -gA REQUESTED=() SKIPPED=() EFFECTIVE=()
     declare -ga SCOPE=()
@@ -246,7 +254,7 @@ parse_args() {
             --status|--dry-run|--diff|--apply|--list|--version|--changelog|--self-hash|--help)
                 set_mode "${flag#--}" || return ;;
             --explain|--rollback|--only|--skip|--ids-file|--config|--max-risk|--output-dir|\
-            --backup-dir|--format|--group-by|--resume|--color|--ckl|--ckl-section|--ack-ckl-host)
+            --backup-dir|--format|--group-by|--resume|--color|--approved-time-source|--ckl|--ckl-section|--ack-ckl-host)
                 if (( $# == 0 )) || [[ -z $1 || $1 == --* ]]; then
                     usage_error "$flag needs a value"; return
                 fi
@@ -260,6 +268,11 @@ parse_args() {
                     --skip) select_ids SKIPPED "$value" || return ;;
                     --ids-file) read_ids_file "$value" || return; SELECT_EXPLICIT=1 ;;
                     --config) CONFIG_FILE=$value ;;
+                    --approved-time-source)
+                        if ! chrony_valid_approved_server "$value"; then
+                            usage_error '--approved-time-source requires a DNS hostname or IPv4 address'; return
+                        fi
+                        CHRONY_RUN_SERVER=$value ;;
                     --max-risk) MAX_RISK=$value ;;
                     --output-dir) REPORT_BASE=$value ;;
                     --backup-dir) BACKUP_BASE=$value ;;
@@ -323,7 +336,7 @@ parse_args() {
         fi
     fi
     if [[ $MODE == rollback ]]; then
-        if ! valid_run_id "$ROLLBACK_ID" || [[ -n $RESUME_ID || -n $CONFIG_FILE ]] ||
+        if ! valid_run_id "$ROLLBACK_ID" || [[ -n $RESUME_ID || -n $CONFIG_FILE || -n $CHRONY_RUN_SERVER ]] ||
            (( SELECT_EXPLICIT || ${#SKIPPED[@]} || DEFER )); then
             usage_error 'rollback needs a valid run ID and the original scope'; return
         fi
@@ -355,6 +368,11 @@ read_site_config() {
                     usage_error 'GPGCHECK_ALTERNATE_REPOS needs comma-separated DNF repository IDs'; return
                 fi
                 GPGCHECK_ALTERNATE_REPOS=$value ;;
+            CHRONY_APPROVED_SERVER)
+                if ! chrony_valid_approved_server "$value"; then
+                    usage_error 'CHRONY_APPROVED_SERVER needs one approved DNS name or unicast IPv4 address'; return
+                fi
+                CHRONY_APPROVED_SERVER=$value ;;
             *) usage_error 'invalid or duplicate site setting'; return ;;
         esac
         seen[$key]=1
@@ -614,12 +632,15 @@ report_text() {
 }
 
 render_admin_action() {
-    local id=$1 fn quoted_script
+    local id=$1 fn quoted_script verification_args=''
     printf -v quoted_script '%q' "$SCRIPT_PATH"
     printf '%s — %s\n' "$id" "${TITLE[$id]}"
     printf '%s / %s. %s\n' "${AFTER[$id]}" "${ACTIONS[$id]}" "${DETAIL[$id]}"
     if [[ ${ACTIONS[$id]} == BLOCKED && ${DISPLAY_PLAN[$id]-} ]]; then
         printf 'Blocking prerequisite: %s\n' "${DISPLAY_PLAN[$id]}"
+    fi
+    if [[ ${RESOLUTION_NOTES[$id]-} ]]; then
+        printf 'Operator-provided evidence reference: %s\n' "${RESOLUTION_NOTES[$id]}"
     fi
     fn="rule_${id//-/_}_admin"
     if declare -F "$fn" >/dev/null; then
@@ -629,7 +650,10 @@ render_admin_action() {
         printf '2. Record site dependencies and approval, then follow the reviewed local procedure.\n'
         printf '   Check %s | Fix %s\n' "${CHECK_REF[$id]}" "${FIX_REF[$id]}"
     fi
-    printf 'Scoped verification: %s --status --only %s\n\n' "$quoted_script" "$id"
+    if [[ $id == V-230484 && ${CHRONY_RUN_SERVER:-${CHRONY_APPROVED_SERVER-}} ]]; then
+        printf -v verification_args ' --approved-time-source %q' "${CHRONY_RUN_SERVER:-$CHRONY_APPROVED_SERVER}"
+    fi
+    printf 'Scoped verification: %s --status --only %s%s\n\n' "$quoted_script" "$id" "$verification_args"
 }
 
 write_admin_actions() {
@@ -637,6 +661,7 @@ write_admin_actions() {
     for id in "${SCOPE[@]}"; do
         if [[ ${SKIPPED[$id]+excluded} ]]; then continue; fi
         if [[ ${AFTER[$id]} =~ ^(PASS|NOT_APPLICABLE)$ &&
+              ! ${RESOLUTION_NOTES[$id]+recorded} &&
               ! ${ACTIONS[$id]} =~ ^(BLOCKED|PENDING_ACTIVATION|FAILED|ROLLED_BACK)$ ]]; then continue; fi
         render_admin_action "$id"
     done
@@ -6328,8 +6353,66 @@ rule_V_230479_admin() {
 EOF
 }
 
+chrony_valid_approved_server() {
+    local LC_ALL=C value=${1%.} label first
+    local -a labels=()
+    [[ -n $value && ${#value} -le 253 && $value != *..* &&
+       $value != .* && $value != *. && $value =~ ^[A-Za-z0-9.-]+$ ]] || return 1
+    [[ ${value,,} != localhost && ${value,,} != *.localhost ]] || return 1
+    IFS=. read -r -a labels <<< "$value"
+    if [[ $value =~ ^[0-9.]+$ ]]; then
+        [[ $1 == "$value" ]] && (( ${#labels[@]} == 4 )) || return 1
+        for label in "${labels[@]}"; do
+            [[ $label =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( label <= 255 )) || return 1
+        done
+        first=${labels[0]}
+        (( first > 0 && first != 127 && first < 224 ))
+        return
+    fi
+    for label in "${labels[@]}"; do
+        [[ $label =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] || return 1
+    done
+}
+
+chrony_effective_approved_server() {
+    printf '%s\n' "${CHRONY_RUN_SERVER:-${CHRONY_APPROVED_SERVER-}}"
+}
+
+chrony_config_summary() {
+    LC_ALL=C awk -v approved="$2" '
+        function canonical(name) { sub(/[.]$/, "", name); return tolower(name) }
+        /^[[:space:]]*($|[#;!%])/ { next }
+        tolower($1) == "include" || tolower($1) == "confdir" || tolower($1) == "sourcedir" { includes = 1 }
+        tolower($1) ~ /^(pool|peer|refclock|local|manual|authselectmode)$/ { other = 1 }
+        tolower($1) == "minsources" && $2 != "1" { other = 1 }
+        tolower($1) == "server" {
+            if (NF < 2 || $2 ~ /^[#;!%]/) { ambiguous = 1; next }
+            servers++
+            matched = (approved != "" && canonical($2) == canonical(approved))
+            if (matched) matching++
+            bounded = 0
+            seen = 0
+            for (i = 3; i <= NF; i++) {
+                if ($i ~ /^[#;!%]/) break
+                if (tolower($i) == "maxpoll") {
+                    if (++seen > 1 || $(i + 1) !~ /^-?[0-9]{1,3}$/) ambiguous = 1
+                    else if ($(i + 1) + 0 > 16) excessive = 1
+                    else bounded = 1
+                    i++
+                }
+            }
+            if (matched && bounded) matching_bounded++
+        }
+        END {
+            print servers + 0, includes + 0, ambiguous + 0, excessive + 0,
+                  other + 0, matching + 0, matching_bounded + 0
+        }
+    ' "$1" 2>/dev/null
+}
+
 rule_V_230484_check() {
-    local path=/etc/chrony.conf result
+    local path=/etc/chrony.conf result approved
+    local servers includes ambiguous excessive other matching matching_bounded
     if ! have_tools awk; then
         rule_result UNKNOWN 'awk is required to inspect the chrony configuration.'
         return
@@ -6338,35 +6421,34 @@ rule_V_230484_check() {
         rule_result FAIL 'The required /etc/chrony.conf file was not found.'
         return
     fi
-    if [[ ! -f $path || ! -r $path ]]; then
-        rule_result UNKNOWN 'The chrony configuration is not a readable regular file.'
+    if ! text_input_file "$path"; then
+        rule_result UNKNOWN 'The chrony configuration is not a readable regular text file.'
         return
     fi
-    result=$(awk '
-        /^[[:space:]]*($|[#;!%])/ { next }
-        tolower($1) == "include" || tolower($1) == "confdir" || tolower($1) == "sourcedir" { includes = 1 }
-        tolower($1) == "server" {
-            if (NF < 2) { ambiguous = 1; next }
-            servers++
-            seen = 0
-            for (i = 3; i <= NF; i++) {
-                if (tolower($i) == "maxpoll") {
-                    if (++seen > 1 || $(i + 1) !~ /^-?[0-9]+$/) ambiguous = 1
-                    else if ($(i + 1) + 0 > 16) excessive = 1
-                    i++
-                }
-            }
-        }
-        END { print servers + 0, includes + 0, ambiguous + 0, excessive + 0 }
-    ' "$path" 2>/dev/null) || { rule_result ERROR 'chrony configuration parsing failed.'; return; }
-    local servers includes ambiguous excessive
-    read -r servers includes ambiguous excessive <<< "$result"
+    approved=$(chrony_effective_approved_server)
+    result=$(chrony_config_summary "$path" "$approved") ||
+        { rule_result ERROR 'chrony configuration parsing failed.'; return; }
+    read -r servers includes ambiguous excessive other matching matching_bounded <<< "$result"
     if ((excessive)); then
         rule_result FAIL 'An active server in /etc/chrony.conf specifies maxpoll greater than 16.'
     elif ((ambiguous || includes)); then
         rule_result NEEDS_REVIEW 'chrony includes or ambiguous server options require an effective configuration and time-source review.'
-    elif ((!servers)); then
-        rule_result FAIL 'No active server directive was found in /etc/chrony.conf.'
+    elif (( ! servers )); then
+        if (( other )); then
+            rule_result FAIL 'No active server directive was found. Alternate time sources or selection policies require review.'
+        elif [[ $approved ]]; then
+            rule_result FAIL 'No active server directive was found. The supplied approved time source can be considered in the plan.'
+        else
+            rule_result FAIL 'No active server directive was found. Supply the approved time source to review adding it.'
+        fi
+    elif [[ $approved ]] && (( matching == 0 )); then
+        rule_result NEEDS_REVIEW 'The supplied approved server does not match the existing server entries. Review the authoritative time configuration.'
+    elif [[ $approved ]] && (( ! other && servers == 1 && matching_bounded == 1 )); then
+        if chrony_verify_live "$path" "$approved"; then
+            rule_result PASS 'The supplied approved server matches the sole configured source and the running chrony source. Synchronization and a recent poll within the required limit were observed.'
+        else
+            rule_result NEEDS_REVIEW 'The approved source and poll limit are present in the file. A current synchronized source could not be verified. Check activation and the selected source.'
+        fi
     else
         rule_result NEEDS_REVIEW \
             "$servers configured server entries were inspected. Confirm the approved authoritative source and live synchronization."
@@ -6380,6 +6462,8 @@ rule_V_230484_admin() {
 2. Use the approved configuration source for chrony. For the DISA example, configure a server line
    for the actual approved site value with iburst and maxpoll no greater than 16. Coordinate the
    change with dependent applications, since restoring configuration cannot undo clock adjustments.
+   To propose adding a server where no existing or alternate source is configured, supply one site-
+   approved name or address as CHRONY_APPROVED_SERVER or through the approved time-source input.
 3. After controlled activation, use chronyc -n tracking and chronyc -n sources to verify root delay,
    synchronization, selected source and poll interval against approved evidence.
 EOF
@@ -9478,20 +9562,109 @@ chrony_poll_validate() {
     chrony_poll_transform "$1" validate && timeout 12 chronyd -p -f "$1" >/dev/null 2>&1
 }
 
+chrony_verify_live() {
+    local path=$1 approved=$2 service started conf_seconds start_seconds sources tracking
+    have_tools chronyd chronyc systemctl date stat &&
+        attended_policy_source "$path" && chrony_authority >/dev/null &&
+        timeout 12 chronyd -p -f "$path" >/dev/null 2>&1 || return 1
+    service=$(LC_ALL=C timeout 8 systemctl show chronyd.service --no-pager -p ActiveState \
+        -p ExecMainStartTimestamp 2>/dev/null) || return 1
+    grep -qx 'ActiveState=active' <<< "$service" || return 1
+    started=$(awk '/^ExecMainStartTimestamp=/ {sub(/^[^=]*=/, ""); print}' <<< "$service") || return 1
+    [[ $started ]] || return 1
+    conf_seconds=$(stat -c %Y -- "$path") && start_seconds=$(LC_ALL=C date -d "$started" +%s) || return 1
+    [[ $conf_seconds =~ ^[0-9]+$ && $start_seconds =~ ^[0-9]+$ ]] &&
+        (( conf_seconds < start_seconds )) || return 1
+    # -N retains the originally configured name and -c avoids DNS and truncation.
+    sources=$(LC_ALL=C timeout 8 chronyc -c -N sources -a 2>/dev/null) || return 1
+    LC_ALL=C awk -F, -v approved="$approved" '
+        function canonical(name) { sub(/[.]$/, "", name); return tolower(name) }
+        NF == 10 && $1 == "^" && $2 == "*" && canonical($3) == canonical(approved) &&
+            $4 ~ /^[0-9]{1,2}$/ && $4 + 0 > 0 && $4 + 0 < 16 &&
+            $5 ~ /^-?[0-9]{1,2}$/ && $5 + 0 <= 16 &&
+            $6 ~ /^[0-7]{1,3}$/ && $6 + 0 > 0 &&
+            $7 ~ /^[0-9]{1,5}$/ && $7 + 0 <= 86400 { verified++ }
+        END { exit !(NR == 1 && verified == 1) }
+    ' <<< "$sources" || return 1
+    tracking=$(LC_ALL=C timeout 8 chronyc -n tracking 2>/dev/null) || return 1
+    grep -Eq '^Leap status[[:space:]]+:[[:space:]]*Normal$' <<< "$tracking"
+}
+
+chrony_no_live_alternative() {
+    local state activity
+    state=$(LC_ALL=C timeout 8 systemctl show chronyd.service -p ActiveState --value 2>/dev/null) || return 1
+    case $state in
+        inactive) return 0 ;;
+        active)
+            have_tools chronyc || return 1
+            activity=$(LC_ALL=C timeout 8 chronyc -c activity 2>/dev/null) || return 1
+            [[ $activity == 0,0,0,0,0 ]] ;;
+        *) return 1 ;;
+    esac
+}
+
+chrony_render_approved_source() {
+    cat -- "$1" && printf '\nserver %s iburst maxpoll 16\n' "$2"
+}
+
+chrony_approved_source_validate() {
+    local candidate=$1 target=$2 approved summary expected actual
+    approved=$(chrony_effective_approved_server)
+    chrony_valid_approved_server "$approved" || return 1
+    summary=$(chrony_config_summary "$candidate" "$approved") || return 1
+    [[ $summary == '1 0 0 0 0 1 1' ]] &&
+        timeout 12 chronyd -p -f "$candidate" >/dev/null 2>&1 || return 1
+    if [[ $candidate == "$target" ]]; then return 0; fi
+    # Before installation, bind the new directive to the unmodified target bytes.
+    [[ $(chrony_config_summary "$target" "$approved") == '0 0 0 0 0 0 0' ]] &&
+        chrony_no_live_alternative || return 1
+    expected=$(chrony_render_approved_source "$target" "$approved" | sha256sum) &&
+        actual=$(sha256sum < "$candidate") && [[ $expected == "$actual" ]]
+}
+
 rule_V_230484_plan() {
-    local path=/etc/chrony.conf diff
-    if ! have_tools chronyd systemctl || ! text_input_file "$path" || ! EDIT_CONTEXT=$(chrony_authority); then
-        edit_fail 'an authoritative vendor chronyd service and regular chrony.conf are required'; return
+    local path=/etc/chrony.conf diff approved result validator
+    local servers includes ambiguous excessive other matching matching_bounded
+    if ! have_tools chronyd systemctl || ! attended_policy_source "$path" || ! EDIT_CONTEXT=$(chrony_authority); then
+        edit_fail 'an authoritative vendor chronyd service and trusted regular chrony.conf are required'; return
     fi
-    if ! chrony_poll_transform "$path" render "$EDIT_TEMP/chrony-poll-diff" > "$EDIT_TEMP/chrony-poll" ||
-       ! timeout 12 chronyd -p -f "$path" >/dev/null 2>&1; then
-        edit_fail 'chrony syntax, includes or server options do not support a verified maxpoll-only edit'; return
+    approved=$(chrony_effective_approved_server)
+    result=$(chrony_config_summary "$path" "$approved") || {
+        edit_fail 'the chrony configuration could not be inspected'; return;
+    }
+    read -r servers includes ambiguous excessive other matching matching_bounded <<< "$result"
+    if ! timeout 12 chronyd -p -f "$path" >/dev/null 2>&1; then
+        edit_fail 'the native chronyd parser rejected the existing configuration'; return
     fi
-    diff=$(< "$EDIT_TEMP/chrony-poll-diff")
-    EDIT_REQUIREMENTS='Confirm the current time sources are approved and coordinate with the time-service owner. This edit reduces only excessive maxpoll values.'
+    EDIT_CONTEXT+=" approved time source=${approved:-unsupplied}"
+    if (( excessive )); then
+        if ! chrony_poll_transform "$path" render "$EDIT_TEMP/chrony-poll-diff" > "$EDIT_TEMP/chrony-poll"; then
+            edit_fail 'chrony includes or server options do not support a verified maxpoll-only edit'; return
+        fi
+        diff=$(< "$EDIT_TEMP/chrony-poll-diff")
+        validator=chrony_poll_validate
+        EDIT_REQUIREMENTS='Confirm the current time sources are approved and coordinate with the time-service owner. This edit reduces only excessive maxpoll values.'
+    else
+        if (( servers || includes || ambiguous || other )); then
+            edit_fail 'existing or alternate sources, includes, or source policies require review before adding an approved server'; return
+        fi
+        if ! chrony_valid_approved_server "$approved"; then
+            edit_fail 'supply one approved time server name or address to prepare this plan'; return
+        fi
+        if grep -qiE '^[[:blank:]]*[#;].*(do not edit|automatically generated|managed by|ansible managed)' "$path"; then
+            edit_fail 'the chrony configuration appears to be externally managed'; return
+        fi
+        if ! chrony_no_live_alternative; then
+            edit_fail 'existing live time sources or an unverified chronyd service state require review'; return
+        fi
+        chrony_render_approved_source "$path" "$approved" > "$EDIT_TEMP/chrony-poll" || return 1
+        diff="+ server $approved iburst maxpoll 16"
+        validator=chrony_approved_source_validate
+        EDIT_REQUIREMENTS='Confirm the supplied source is approved for this host and accepts this NTP configuration. Review any site authentication requirements and coordinate activation with the time-service owner.'
+    fi
     EDIT_DISPOSITION=pending
     EDIT_ACTIVATION='Activate chronyd in the approved window. Confirm the approved authoritative source, synchronization and poll behavior with chronyc tracking and chronyc sources.'
-    edit_content "$path" keep "$diff" chrony_poll_validate < "$EDIT_TEMP/chrony-poll"
+    edit_content "$path" keep "$diff" "$validator" < "$EDIT_TEMP/chrony-poll"
 }
 
 
@@ -13228,6 +13401,9 @@ tui_actions() {
             focus_action+=(Implement-One 'Choose one finding to review separately')
         fi
     fi
+    if resolution_supported "$TUI_FOCUS"; then
+        focus_action+=(Resolve "Review prerequisites and evidence for $TUI_FOCUS")
+    fi
     tui_choose Actions "Filters: $REPLY. Bulk actions use all ${#TUI_MATCH[@]} matching rows." \
         "${focus_action[@]}" \
         Search 'Search IDs, descriptions and actions' \
@@ -13246,6 +13422,7 @@ tui_actions() {
             result=$?
             if (( result == 0 )); then TUI_IMPLEMENT=1; elif (( result == 2 )); then return 2; fi ;;
         Implement-One) tui_choose_implementation || return 2 ;;
+        Resolve) tui_resolution "$TUI_FOCUS" || return 2 ;;
         Search)
             tui_input Search 'Enter part of an ID, description or proposed action' "$TUI_SEARCH"
             result=$?
@@ -13300,6 +13477,50 @@ tui_choose_implementation() {
         0) tui_implement_focused "$TUI_CHOICE" ;;
         1) return 0 ;;
         *) return 2 ;;
+    esac
+}
+
+tui_resolution() {
+    local id=$1 result value previous
+    local -a choices=(Evidence 'Record a non-sensitive evidence reference')
+    resolution_text "$id" | tr -d '\000-\010\013-\037\177-\377' > "$TUI_TEMP/view.txt" || return 2
+    tui_view "Resolve | $id" Options
+    result=$?
+    if (( result == 1 )); then return 0; elif (( result )); then return 2; fi
+    if [[ $id == V-230484 ]]; then choices+=(Source 'Enter a site-approved chrony source'); fi
+    if resolution_dependency_available "$id"; then choices+=(Scope 'Add V-288829 to the reviewed scope'); fi
+    tui_choose "Resolve | $id" 'Choose an action or return to Findings.' "${choices[@]}"
+    result=$?
+    if (( result == 1 )); then return 0; elif (( result )); then return 2; fi
+    case $TUI_CHOICE in
+        Evidence)
+            tui_input 'Evidence reference' 'Enter a non-sensitive reference to keep with this finding in the run report.' \
+                "${RESOLUTION_NOTES[$id]-}"
+            result=$?
+            if (( result == 2 )); then return 2; elif (( result )); then return 0; fi
+            if ! resolution_note_set "$id" "$TUI_REPLY"; then
+                tui_message Resolve 'Use at most 512 bytes and omit control characters.'; return
+            fi
+            tui_message Resolve 'The reference will be included if you save a report for this finding.' ;;
+        Source)
+            tui_input 'Approved time source' 'Enter the hostname or IPv4 address the site approved.' \
+                "${CHRONY_RUN_SERVER:-${CHRONY_APPROVED_SERVER-}}"
+            result=$?
+            if (( result == 2 )); then return 2; elif (( result )); then return 0; fi
+            value=$TUI_REPLY
+            if ! chrony_valid_approved_server "$value"; then tui_message Resolve 'Enter a DNS hostname or IPv4 address.'; return; fi
+            tui_confirm 'Use approved source' "Reassess with $value? Review and approve any resulting plan separately." Reassess Back
+            result=$?
+            if (( result == 2 )); then return 2; elif (( result )); then return 0; fi
+            previous=$CHRONY_RUN_SERVER
+            CHRONY_RUN_SERVER=$value
+            if ! tui_backend_refresh browse; then CHRONY_RUN_SERVER=$previous; return 2; fi ;;
+        Scope)
+            tui_confirm 'Include V-288829' 'The SSH crypto-policy change also affects OpenSSL. Include V-288829 for a new review?' Include Back
+            result=$?
+            if (( result == 2 )); then return 2; elif (( result )); then return 0; fi
+            resolution_enroll_openssl
+            tui_backend_refresh browse || return 2 ;;
     esac
 }
 
@@ -13733,6 +13954,7 @@ explain_rule() {
     printf 'Official archive %s\n' "$ARCHIVE_URL"
     printf '\nDISA check %s\n%s\n' "${CHECK_REF[$id]}" "${OFFICIAL_CHECK[$id]}"
     printf '\nDISA fix %s (reference only)\n%s\n\n' "${FIX_REF[$id]}" "${OFFICIAL_FIX[$id]}"
+    if resolution_supported "$id"; then rule_resolution_guidance "$id" && printf '\n'; fi
     if declare -F "$fn" >/dev/null; then "$fn"; fi
 }
 
@@ -17061,6 +17283,174 @@ cache_observe_source() {
             *) return 1 ;;
         esac
     } 2>/dev/null
+}
+
+# Guided resolution reuses the same checks and guarded remediation plans.
+resolution_supported() {
+    case $1 in
+        V-230251|V-230252|V-230264|V-230279|V-230287|V-230301|V-230484|V-23049[4-9]|\
+        V-230530|V-244541|V-251710|V-257258|V-268322|V-272482|V-272483|V-274877|V-288831) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+resolution_note_set() {
+    local id=$1 note=$2 LC_ALL=C
+    resolution_supported "$id" && (( ${#note} <= 512 )) &&
+        [[ $note != *[[:cntrl:]]* ]] || return 1
+    if [[ $note ]]; then RESOLUTION_NOTES[$id]=$note; else unset 'RESOLUTION_NOTES[$id]'; fi
+}
+
+resolution_text() {
+    local id=$1
+    resolution_supported "$id" || return 1
+    printf 'Assessment %s | Action %s\n\n' "${AFTER[$id]-UNKNOWN}" "${ACTIONS[$id]-UNCHANGED}" || return 1
+    printf 'Observed evidence\n%s\n\n' "${DETAIL[$id]:-No evidence recorded for the current scope.}" || return 1
+    if [[ ${DISPLAY_PLAN[$id]-} ]]; then
+        if [[ ${ACTIONS[$id]-} == BLOCKED ]]; then printf 'Blocking prerequisite\n' || return 1
+        else printf 'Prepared change or next action\n' || return 1; fi
+        printf '%s\n\n' "${DISPLAY_PLAN[$id]}" || return 1
+    fi
+    if [[ $id == V-251710 ]]; then
+        printf 'Default AIDE paths (local observations)\n' || return 1
+        local path
+        for path in /etc/aide.conf /var/lib/aide/aide.db.gz; do
+            if [[ -f $path && ! -L $path && $(realpath -e -- "$path" 2>/dev/null) == "$path" ]]; then
+                stat -c '%n | owner %u | mode %a | modified %y' -- "$path" 2>/dev/null ||
+                    printf '%s | metadata unavailable\n' "$path"
+            else
+                printf '%s | absent, linked, or unavailable\n' "$path"
+            fi
+        done
+        printf '\n' || return 1
+    fi
+    rule_resolution_guidance "$id" || return 1
+    if [[ ${RESOLUTION_NOTES[$id]-} ]]; then
+        printf '\nOperator-provided evidence reference\n%s\n' "${RESOLUTION_NOTES[$id]}"
+    fi
+    return 0
+}
+
+resolution_dependency_available() {
+    local id=$1
+    case $id in V-230251|V-230252|V-272482|V-272483) ;; *) return 1 ;; esac
+    [[ $MODE == apply && ! ${CKL_PATH-} && ! ${RESUME_ID-} &&
+       ! ${SKIPPED[V-288829]+skipped} &&
+       ${DISPLAY_PLAN[$id]-} == 'shared effect would change skipped or unselected V-288829' ]]
+}
+
+resolution_enroll_openssl() {
+    local -a ordered=()
+    mapfile -t ordered < <(printf '%s\n' "${TUI_IDS[@]}" V-288829 | LC_ALL=C sort -u)
+    TUI_IDS=("${ordered[@]}")
+    REQUESTED[V-288829]=1 TUI_ALLOWED[V-288829]=1 TUI_SELECTED[V-288829]=1
+}
+
+# Per-finding resolution guidance for the 22-item reviewed scope.
+rule_resolution_guidance() {
+    local id=${1-} method prerequisites decision verification subject
+    case $id in
+        V-230251|V-230252|V-272482|V-272483)
+            case $id in
+                V-230251) subject='SSH server MACs' ;;
+                V-230252) subject='SSH server ciphers' ;;
+                V-272482) subject='SSH client MACs' ;;
+                V-272483) subject='SSH client ciphers' ;;
+            esac
+            method="Stage the required $subject with the shared client/server crypto-policy operation."
+            prerequisites='Select V-230251, V-230252, V-272482 and V-272483 together. Stock DEFAULT additionally requires V-288829 explicitly in scope for the OpenSSL impact. Configured and active policy must agree on supported stock DEFAULT or FIPS with unchanged OpenSSH backends. Local overrides and alternate profiles require review.'
+            decision='Confirm ownership of the crypto policy, compatibility for affected clients and services, and console recovery. A transition from DEFAULT affects non-SSH consumers as well.'
+            verification='After approved policy regeneration and service activation, verify the effective client and server allowlists and test new SSH connections.'
+            ;;
+        V-230264)
+            method='Enable gpgcheck=1 in the eligible enabled static DNF repository definitions shown in the plan.'
+            prerequisites='DNF must resolve each repository to a unique local source and the planner must verify the existing signing-key fingerprints. Use the authoritative source for generated, managed, or unresolved repositories.'
+            decision='Confirm the displayed keys are approved for their repositories and identify any approved alternate verification process. Obtain unverified keys from the authorized source.'
+            verification='Recheck effective DNF signature settings and confirm package availability through the approved repositories.'
+            ;;
+        V-230279)
+            method='Stage init_on_free=1 for a supported GRUB and Boot Loader Specification configuration.'
+            prerequisites='The planner needs a recognizable GRUB configuration, static defaults, native boot tooling, and an unambiguous installed-kernel inventory. Resolve conflicting arguments or boot management at its authoritative source.'
+            decision='Confirm boot policy ownership, workload impact, recovery console availability, and the maintenance window.'
+            verification='Complete the boot-entry activation shown in the plan. Check the installed boot arguments and verify init_on_free=1 is in the running kernel command line after reboot.'
+            ;;
+        V-230287)
+            method='Tighten standard SSH private host-key permissions to 0600 or stricter.'
+            prerequisites='The planner requires an identifiable packaged sshd service, supported configured key paths, and trusted regular host key files. Custom paths, service arguments, linked keys, or insufficient owner access require review.'
+            decision='Confirm nobody depends on group access to the affected keys and retain independent privileged console access.'
+            verification='Validate sshd configuration, check the resulting file modes, and verify a separate fresh SSH login after the approved activation.'
+            ;;
+        V-230301)
+            method='Stage nodev in supported /etc/fstab entries for mounted non-root local device partitions.'
+            prerequisites='The planner needs an authoritative regular fstab, matching active mount topology, and corresponding fstab-generated systemd units.'
+            decision='Confirm the mount namespace, mount ownership, application impact, and recovery access before activation.'
+            verification='Use the approved targeted remount or reboot. Verify the active nodev flag and affected applications afterward.'
+            ;;
+        V-230484)
+            method='Stage a reduction of an excessive explicit maxpoll to 16, or add an approved source for a supported chrony configuration with no configured sources.'
+            prerequisites='The planner needs the supported vendor chronyd service, a trusted regular configuration, and settings that the native parser can verify. An empty source layout needs CHRONY_APPROVED_SERVER. Existing alternative source layouts require review.'
+            decision='Identify the site-approved authoritative source. Confirm whether the source can be used with the proposed settings or requires authentication or another site configuration.'
+            verification='After approved activation, check the authoritative source, actual synchronization, and poll behavior with chronyc tracking and chronyc sources.'
+            ;;
+        V-230494|V-230495|V-230496|V-230497|V-230498|V-230499)
+            case $id in
+                V-230494) subject='ATM networking (atm)' ;;
+                V-230495) subject='physical or virtual CAN networking (can)' ;;
+                V-230496) subject='SCTP transport (sctp)' ;;
+                V-230497) subject='TIPC cluster networking (tipc)' ;;
+                V-230498) subject='cramfs images or recovery media (cramfs)' ;;
+                V-230499) subject='FireWire hardware or storage (firewire-core)' ;;
+            esac
+            method="Stage an install denial and blacklist for $subject."
+            prerequisites='The module must resolve to an unused loadable object for the running kernel. The local modprobe policy directory and tools must pass checks. An existing target, competing directives, loaded or built-in module, or site-owned policy can block staging.'
+            decision="Confirm dependencies for $subject and determine whether approved operational need applies. Review the next-boot initramfs and kdump before authorizing the reboot."
+            verification='After the approved reboot, verify the module is absent and the effective modprobe policy denies loading.'
+            ;;
+        V-230530)
+            method='Stage an empty GNOME Ctrl+Alt+Delete logout binding.'
+            prerequisites='A supported x86 GNOME installation, string-valued logout schema, and a trusted unambiguous dconf profile and source are required.'
+            decision='Confirm this is the authoritative desktop profile and review all pending dconf publications.'
+            verification='Publish the approved dconf changes and verify the effective logout binding and user overrides from a fresh GNOME session.'
+            ;;
+        V-244541|V-268322)
+            if [[ $id == V-244541 ]]; then subject=password-auth; else subject=system-auth; fi
+            method="Remove literal nullok options from the supported pam_unix lines in the active custom $subject template."
+            prerequisites="The active authselect profile needs an editable copied $subject template, ordinary supported PAM syntax, and generated files in sync with the source. Use the authoritative template for managed or alternate layouts."
+            decision='Confirm local profile ownership and independent administrative access. Review the proposed generation and other pending authselect changes before activation.'
+            verification="After approved authselect regeneration, verify authselect check, the effective $subject stack and a fresh relevant login."
+            ;;
+        V-251710)
+            method='Check whether AIDE is installed and present the observation for administrator review.'
+            prerequisites='AIDE or an approved alternative must cover the required security functions. Package installation, baseline creation, and running the tool can each be scripted with site-approved inputs and a trusted reference state.'
+            decision='Provide the approved integrity tool, baseline provenance and coverage evidence, and a recent integrity-check result. The package check establishes tool presence only.'
+            verification='Review the check against the trusted database, investigate detected changes, and record evidence for the applicable security functions.'
+            ;;
+        V-257258)
+            method='Stage StopIdleSessionSec=600 for a supported systemd-logind configuration.'
+            prerequisites='The planner must resolve applicability including the cloud SSH alternative, verify a compatible systemd package containing the logind correction, and identify a supported vendor service and configuration without conflicting overrides.'
+            decision='Confirm any applicable cloud SSH exception, the maintenance window and the impact of idle-session termination on users and automation.'
+            verification='After approved logind activation, use a fresh applicable session to verify it terminates after 600 seconds idle.'
+            ;;
+        V-274877|V-288831)
+            if [[ $id == V-274877 ]]; then
+                method='Stage missing DISA audit watches for /etc/cron.d and /var/spool/cron.'
+                subject='The standard cron directories must be ordinary directories. '
+                decision='Confirm who owns the audit sources, and review whether the broader privileged cron execution requirement needs additional evidence. Review all queued rule changes before activation.'
+            else
+                method='Stage the DISA execution rule for /usr/sbin/useradd.'
+                subject='The standard useradd target must be an ordinary executable. '
+                decision='Confirm who owns the audit sources and whether the planned account filters cover the operators in scope. Review all queued rule changes before activation.'
+            fi
+            prerequisites="${subject}The planner requires the vendor audit tools, enabled kernel auditing, an identifiable augenrules loader and trusted audit source files. Conflicting, overlapping or suppressing rules require authoritative review."
+            verification='Verify approved rules in the loaded audit policy and the expected events. Immutable audit policy needs a maintenance reboot to load new rules.'
+            ;;
+        *) return 1 ;;
+    esac
+    printf '%s\n' \
+        'Automation' "$method" '' \
+        'Prerequisites' "$prerequisites" '' \
+        'Administrator decision' "$decision" '' \
+        'Verification' "$verification"
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then

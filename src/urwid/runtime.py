@@ -16,6 +16,7 @@ EVENT_FIELDS = {
     "browse": {},
     "review": {"token": str, "focused": str, "text": str, "rows": list},
     "detail": {"id": str, "title": str, "text": str},
+    "resolution": {"id": str, "title": str, "text": str, "inputs": list},
     "progress": {"complete": int, "count": int, "id": str},
     "modal": {"kind": str, "title": str, "text": str, "choices": list},
     "notice": {"message": str},
@@ -58,6 +59,14 @@ def decode_workbench_event(frame):
             findings.add(finding)
     if kind == "progress" and not 0 <= event["complete"] <= event["count"]:
         raise ValueError("The workbench received an invalid progress count.")
+    if kind == "resolution":
+        dependency = event.get("dependency")
+        if any(not isinstance(item, dict) or any(not isinstance(item.get(key), str)
+                   for key in ("key", "label", "prompt", "value")) for item in event["inputs"]):
+            raise ValueError("The workbench received an invalid resolution input.")
+        if dependency is not None and (not isinstance(dependency, dict) or any(
+                not isinstance(dependency.get(key), str) for key in ("id", "title", "reason"))):
+            raise ValueError("The workbench received an invalid resolution dependency.")
     if kind == "modal" and (event["kind"] not in ("confirm", "choice", "input", "message")
                             or any(not isinstance(choice, dict) or not isinstance(choice.get("id"), str)
                                    or not isinstance(choice.get("label"), str) for choice in event["choices"])):

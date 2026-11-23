@@ -575,6 +575,7 @@ class Workbench:
         self.modal = None
         self.review = None
         self.review_scope = ()
+        self.resolution_origin = None
         self.settings_after_review = False
         self.review_diff = False
         self.review_hidden = 0
@@ -631,6 +632,7 @@ class Workbench:
         self.request_retry = None
         if kind == "state":
             self.close_modal()
+            self.resolution_origin = None
             self.context = event.get("context", {})
             previous_focus = self.focus_id
             self.rows = {row["id"]: row for row in event.get("rows", [])}
@@ -651,6 +653,8 @@ class Workbench:
                 "scan": scan_feedback, "settings": "Run settings updated.",
                 "import": "Checklist imported. Review the proposed scope.",
                 "load": "Saved selection loaded.",
+                "resolve-input": "Input accepted. Review a fresh plan.",
+                "resolve-scope": "Required finding added. Review the updated selection.",
             }.get(completed, "")
             if not self.initialized:
                 self.initialized = True
@@ -662,6 +666,7 @@ class Workbench:
                 self.show_findings()
         elif kind == "browse":
             self.close_modal()
+            self.resolution_origin = None
             self.feedback = ""
             self.show_findings()
         elif kind == "review":
@@ -673,6 +678,10 @@ class Workbench:
             self.close_modal()
             self.feedback = ""
             self.show_detail(event)
+        elif kind == "resolution":
+            self.close_modal()
+            self.feedback = "Evidence note recorded." if completed == "resolve-input" else ""
+            self.show_resolution(event)
         elif kind in ("notice", "error"):
             self.feedback = wb_line(event.get("message"))
             self.status_widget.set_text(("warning" if kind == "error" else "muted", self.feedback))
@@ -702,6 +711,8 @@ class Workbench:
             "scan": "Refreshing findings…", "review": "Building a fresh plan…",
             "detail": "Loading finding details…", "import": "Validating the checklist…",
             "settings": "Validating settings and refreshing…", "setup": "Validating run settings and scope…",
+            "resolve": "Loading resolution steps…", "resolve-input": "Checking the supplied input…",
+            "resolve-scope": "Checking the scope dependency…",
             "accept": "Preparing the attended run…",
         }.get(fields[0], "Working…")
         self.status_widget.set_text(("accent", self.feedback))
@@ -1213,6 +1224,7 @@ class Workbench:
         if self.focus_id:
             plan = "Implement only" if can_apply else "Preview"
             items.append(("{} {} (F6)".format(plan, self.focus_id), self.review_focused))
+            items.append(("Resolve " + self.focus_id, self.open_resolution))
         items.extend([
             ("Quick triage views (F10)", self.open_quick_views),
             ("Paste Vuln-IDs", self.open_batch_selection),
@@ -1445,9 +1457,101 @@ class Workbench:
         key = wb_line(event.get("id"))
         body = wb_document(wb_text(event.get("text")))
         actions = self.buttons([("Back", self.show_findings),
-                                ("Preview diff", lambda: self.preview_finding_diff(key))])
+                                ("Preview diff", lambda: self.preview_finding_diff(key)),
+                                ("Resolve", lambda: self.open_resolution(key))])
         self.sections("Details  " + key, body, actions,
                       "Arrows and Page Up/Down scroll  |  Tab to buttons  |  Esc returns to findings")
+
+    def open_resolution(self, finding=None):
+        finding = finding or self.focus_id
+        if not finding or self.busy:
+            return
+        self.resolution_origin = (self.page, self.base_frame, self.status_widget, self.feedback)
+
+        def unable(message):
+            self.resolution_origin = None
+            self.open_modal("Resolution unavailable", message, [("Back", self.close_modal)])
+
+        self.request("resolve", finding, on_error=unable)
+
+    def show_resolution(self, event):
+        self.page = "resolution"
+        finding = event["id"]
+        body = wb_document(event.get("text"))
+        controls = []
+        if event.get("title"):
+            controls.append(WorkbenchDocumentLine(("section", wb_text(event["title"]))))
+        dependency = event.get("dependency")
+        if dependency:
+            controls.append(wb_button("Review required " + wb_line(dependency["id"]),
+                                      lambda: self.confirm_resolution_scope(finding, dependency)))
+        controls.extend(wb_button(wb_line(field["label"]),
+                                  lambda item=field: self.edit_resolution_input(finding, item))
+                        for field in event.get("inputs", []))
+        if controls:
+            body.body[0:0] = controls + [urwid.Divider()]
+            body.set_focus(0)
+        self.sections("Resolve  " + finding, body, self.buttons([("Back", self.close_resolution)]),
+                      "Enter opens an action   PgUp/PgDn scroll   Esc back")
+
+    def close_resolution(self):
+        origin = self.resolution_origin
+        self.resolution_origin = None
+        if origin is None:
+            self.show_findings()
+            return
+        self.page, self.base_frame, self.status_widget, self.feedback = origin
+        self.status_widget.set_text(("muted", self.feedback))
+        if self.page == "findings" and self.findings_width != self.layout_flags():
+            self.show_findings(self.base_frame.focus_position)
+        else:
+            self.render_active_page()
+
+    def resolution_selection(self):
+        if self.review and self.resolution_origin and self.resolution_origin[0] in (
+                "review", "review index", "review item"):
+            return ",".join(sorted(row["id"] for row in self.review["rows"]))
+        return ",".join(sorted(self.selected))
+
+    def edit_resolution_input(self, finding, field, initial=None, error=""):
+        label = wb_line(field["label"])
+        feedback = urwid.Text(("warning", wb_text(error)))
+
+        def submit(value):
+            if (not value.strip() or len(value.encode("utf-8")) > 1024 or
+                    any(unicodedata.category(char)[0] == "C" for char in value)):
+                feedback.set_text(("warning", "Enter printable text of up to 1,024 bytes."))
+                return
+            value = value.strip()
+            selection = self.resolution_selection()
+            evidence = field["key"] == "evidence-note"
+            message = ("Record this evidence note for {}?" if evidence else
+                       "Use this input to build a fresh plan for {}?").format(finding)
+            edit = lambda: self.edit_resolution_input(finding, field, value)
+
+            def confirm():
+                self.request("resolve-input", finding, field["key"], value, selection,
+                             on_error=lambda problem: self.edit_resolution_input(finding, field, value, problem))
+
+            self.open_modal("Confirm input", message,
+                            [("Record evidence" if evidence else "Use input", confirm), ("Back", edit)],
+                            default=1, widgets=[WorkbenchDocumentLine(value)], escape=edit)
+
+        editor = WorkbenchEdit("Value  ", wb_line(field.get("value")) if initial is None else initial,
+                               submit=submit)
+        editor.set_edit_pos(len(editor.edit_text))
+        self.open_modal(label, wb_text(field.get("prompt")),
+                        [("Review input", lambda: submit(editor.edit_text)), ("Back", self.close_modal)],
+                        widgets=[urwid.AttrMap(editor, "input", "focus"), feedback], initial="body")
+
+    def confirm_resolution_scope(self, finding, dependency):
+        required = dependency["id"]
+        message = "{}  {}\n\n{}\n\nReview the updated scope before starting approvals.".format(
+            wb_line(required), wb_line(dependency.get("title")), wb_text(dependency.get("reason")))
+        self.open_modal("Include required finding", message,
+                        [("Include " + wb_line(required),
+                          lambda: self.request("resolve-scope", finding, required, self.resolution_selection())),
+                         ("Back", self.close_modal)], default=1)
 
     def review_selection(self):
         if not self.selected:
@@ -1504,6 +1608,8 @@ class Workbench:
             ledger += "\nThis proposal needs a fresh review before continuing."
         if len(rows) > 1:
             actions.append(("Finding index", lambda: self.open_review_index(diff_only)))
+        elif rows:
+            actions.append(("Resolve", lambda: self.open_resolution(rows[0]["id"])))
         controls = WorkbenchActions(
             [(len(label) + 4, wb_button(label, callback)) for label, callback in actions],
             dividechars=1)
@@ -1590,6 +1696,7 @@ class Workbench:
                 self.base_frame.focus_position = "body"
 
             actions.append(("Jump to diff", jump_to_diff))
+        actions.append(("Resolve", lambda: self.open_resolution(row["id"])))
         document = wb_document("\n".join(notes))
         self.sections("Finding " + row["id"], document, self.buttons(actions),
                       "PgUp/PgDn scroll  g/G jump  Tab actions  Esc index")
@@ -1730,7 +1837,7 @@ class Workbench:
             elif not self.modal and not self.busy and self.page == "findings" and key == "ctrl a" and \
                     self.base_frame.focus_position != "header":
                 self.open_actions()
-            elif not self.modal and self.page in ("review", "review item", "details") and key in ("g", "G"):
+            elif not self.modal and self.page in ("review", "review item", "details", "resolution") and key in ("g", "G"):
                 body = self.base_frame.body
                 body.set_focus(0 if key == "g" else len(body.body) - 1, "above" if key == "g" else "below")
                 body._invalidate()
@@ -1777,6 +1884,8 @@ class Workbench:
                 self.return_from_review()
             elif self.page == "review item":
                 self.return_to_review_index()
+            elif self.page == "resolution":
+                self.close_resolution()
             elif self.page == "settings" and not self.context.get("assessed", True):
                 self.confirm_exit()
             elif self.page == "settings" and self.settings_after_review:

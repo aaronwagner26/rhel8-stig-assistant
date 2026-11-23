@@ -56,6 +56,10 @@ The tool shows the complete selected plan first. Confirming the reviewed scope a
 
 The assessment result, handling, operational risk, and action outcome answer different questions. **Review** means the available evidence is insufficient to resolve the assessment. **Blocked** indicates an unavailable prerequisite or an ineligible operation. Some findings require administrator evidence or manual work. Use the outcome and evidence to plan activation, verification, or handoff.
 
+In Urwid, open **Resolve** from a finding’s Details or from its entry in the batch **Finding index**. In Classic, highlight a supported finding and choose **Actions → Resolve**. The panel shows the current observation and any exact blocking prerequisite, then describes the guarded fix, administrator decision, and verification. Enter a non-sensitive evidence reference if you have one, and save the run with that finding selected to keep the reference in **Administrator actions**.
+
+For V-230484, enter an approved DNS hostname or IPv4 address in Resolve or pass `--approved-time-source HOST` for the run. To use a protected site configuration, set `CHRONY_APPROVED_SERVER=HOST`. Reassess and review any resulting proposal. An existing source, managed configuration, or unresolved activation can require additional work. For the shared SSH change, Resolve offers an explicit scope extension only when the preview reports that V-288829 is required and the selection permits expansion. [All 22 findings](resolution-guide.md)
+
 ## Reports, rechecks, and recovery
 
 - Reports default to `/var/tmp/rhel8-stig-UID`, where UID is the effective user ID. Backups default to `/var/lib/rhel8-stig/backups`. Use an authorized location and keep reports and backup contents private.

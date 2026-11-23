@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.9-urwid-dev and 0.5.9-dev
+
+- Open Resolve for the 22 selected findings to see assessment evidence, the blocking prerequisite, the available fix, and what to verify afterward.
+- Collect an approved time source for a supported chrony configuration and offer an explicit review of V-288829 when the shared SSH policy change requires it.
+- Save optional operator evidence references with the run report while preserving the assessed result.
+
 ## 0.6.8-urwid-dev and 0.5.8-dev
 
 - Open Urwid Findings directly when Apply is launched with an explicit selection. Show assessment progress and keep Run settings available from Findings.
