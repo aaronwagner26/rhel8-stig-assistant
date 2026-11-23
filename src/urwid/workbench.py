@@ -45,6 +45,18 @@ SORT_RANKS = {
     "cat": {"I": 0, "II": 1, "III": 2},
     "risk": {"high": 0, "medium": 1, "low": 2},
 }
+REVIEW_GROUPS = (
+    ("operations", "Ready for approval"),
+    ("linked", "Included in another approval"),
+    ("manual", "Manual work or evidence"),
+    ("blocked", "Blocked"),
+    ("pending", "Pending activation"),
+    ("passed", "Already compliant"),
+    ("na", "Not applicable"),
+    ("skipped", "Skipped"),
+    ("error", "Assessment errors"),
+    ("other", "Review required"),
+)
 
 
 def wb_text(value):
@@ -482,6 +494,29 @@ def wb_finding_action(row):
     }.get(row.get("outcome"), "Review evidence"))
 
 
+def wb_review_group(row):
+    if row.get("operation", row.get("ready") and not row.get("linked")):
+        return "operations"
+    if row.get("linked"):
+        return "linked"
+    result, outcome = row.get("result"), row.get("outcome")
+    if outcome == "PENDING_ACTIVATION":
+        return "pending"
+    if outcome == "SKIPPED":
+        return "skipped"
+    if result == "ERROR":
+        return "error"
+    if outcome == "BLOCKED" or row.get("handling") == "Blocked":
+        return "blocked"
+    if result == "PASS":
+        return "passed"
+    if result == "NOT_APPLICABLE":
+        return "na"
+    if outcome == "MANUAL_REQUIRED" or row.get("handling") == "Manual":
+        return "manual"
+    return "other"
+
+
 class WorkbenchDocumentLine(urwid.Text):
     """Anchor scrolling at any line on the supported Urwid 1.3 screen."""
 
@@ -611,14 +646,18 @@ class Workbench:
                 self.query, self.sort_name = "", "ID"
                 self.sort_descending = False
                 self.filters = {key: "" for key in self.filters}
+            scan_feedback = "Assessment complete." if self.page == "loading" else "Assessment refreshed."
             self.feedback = {
-                "scan": "Assessment refreshed.", "settings": "Run settings updated.",
+                "scan": scan_feedback, "settings": "Run settings updated.",
                 "import": "Checklist imported. Review the proposed scope.",
                 "load": "Saved selection loaded.",
             }.get(completed, "")
             if not self.initialized:
                 self.initialized = True
-                self.show_settings()
+                if self.context.get("assess_selected_on_open") and not self.context.get("assessed"):
+                    self.assess_initial_selection()
+                else:
+                    self.show_settings()
             else:
                 self.show_findings()
         elif kind == "browse":
@@ -702,6 +741,16 @@ class Workbench:
             button = wb_button(label, callback)
             buttons.append((len(label) + 4, button) if packed else button)
         return WorkbenchActions(buttons, dividechars=1, focus_column=default, wrap_tabs=cycle)
+
+    def assess_initial_selection(self):
+        body = urwid.Filler(urwid.Text("Checking the findings selected at launch.", align="center"))
+        self.sections("Assessing selected findings", body, urwid.Text(""),
+                      "Implementation requires your approval.")
+        self.request("scan", on_error=self.initial_assessment_failed)
+
+    def initial_assessment_failed(self, message):
+        self.show_settings()
+        self.open_modal("Assessment could not start", message, [("Run settings", self.close_modal)])
 
     def show_settings(self):
         self.settings_after_review = self.page in ("review", "review index", "review item")
@@ -993,20 +1042,21 @@ class Workbench:
         else:
             body = urwid.LineBox(findings)
         compact = self.width < 80
+        can_apply = self.context.get("can_apply")
+        batch_label = "Implement selected" if can_apply else "Review plan"
         action_entries = [("Filters", self.open_filters), ("Actions", self.open_actions),
                           ("Details", self.details),
-                          ("Review" if compact else "Review plan", self.review_selection),
+                          ("Review" if compact else batch_label, self.review_selection),
                           ("Exit", self.confirm_exit)]
         if self.width >= 108:
-            action_entries.insert(3, ("Implement" if self.context.get("can_apply") else "Diff",
-                                      self.review_focused if self.context.get("can_apply")
-                                      else self.preview_finding_diff))
+            action_entries.insert(3, ("Implement focused" if can_apply else "Diff",
+                                      self.review_focused if can_apply else self.preview_finding_diff))
         if compact:
             actions = WorkbenchActions(
                 [(len(label) + 4, wb_button(label, callback)) for label, callback in action_entries],
                 dividechars=1)
         else:
-            actions = self.buttons(action_entries)
+            actions = self.buttons(action_entries, packed=can_apply)
         header_controls = urwid.Pile([self.search_row, self.filter_widget, self.count_widget])
         header_controls.focus_position = 0
         hint = "/ Search  S Sort  F6 Plan  F8 Scan  F9 Runs  F10 Views"
@@ -1157,8 +1207,11 @@ class Workbench:
         selected = len(self.bulk_matches("clear"))
         hidden = len(self.selected) - selected
         items = []
+        can_apply = self.context.get("can_apply")
+        if can_apply and self.selected:
+            items.append(("Implement selected ({})".format(len(self.selected)), self.review_selection))
         if self.focus_id:
-            plan = "Implement" if self.context.get("can_apply") else "Preview"
+            plan = "Implement only" if can_apply else "Preview"
             items.append(("{} {} (F6)".format(plan, self.focus_id), self.review_focused))
         items.extend([
             ("Quick triage views (F10)", self.open_quick_views),
@@ -1398,7 +1451,8 @@ class Workbench:
 
     def review_selection(self):
         if not self.selected:
-            self.open_modal("Review plan", "Select at least one finding. Space toggles the focused row.",
+            title = "Implement selected" if self.context.get("can_apply") else "Review plan"
+            self.open_modal(title, "Select at least one finding. Space toggles the focused row.",
                             [("Back", self.close_modal)])
             return
         self.review_hidden = len(self.selected - set(self.visible))
@@ -1424,8 +1478,12 @@ class Workbench:
         focused = wb_line(self.review.get("focused"))
         can_apply = self.context.get("can_apply")
         rows = self.review.get("rows", [])
-        name = ("Implement " if can_apply else "Preview ") + focused if focused else "Review plan"
-        ledger = self.review_ledger()
+        if focused:
+            name = ("Implement " if can_apply else "Preview ") + focused
+        else:
+            name = "Implement selected findings" if can_apply else "Review plan"
+        groups = self.review_groups()
+        ledger = self.review_ledger(groups)
         if diff_only:
             parts = []
             for row in rows:
@@ -1438,7 +1496,9 @@ class Workbench:
         actions = [("Back", self.return_from_review)]
         actions.append(("Plan" if diff_only else "Diffs", lambda: self.show_review(not diff_only)))
         if self.review.get("token"):
-            actions.append(("Continue" if can_apply else "Save report", self.confirm_review))
+            approve_label = "Continue" if focused else "Start approvals"
+            actions.append((approve_label if can_apply and groups["operations"] else "Save report",
+                            self.confirm_review))
         else:
             actions.append(("Review again", self.retry_review))
             ledger += "\nThis proposal needs a fresh review before continuing."
@@ -1447,6 +1507,8 @@ class Workbench:
         controls = WorkbenchActions(
             [(len(label) + 4, wb_button(label, callback)) for label, callback in actions],
             dividechars=1)
+        if can_apply and not focused and not diff_only:
+            ledger += "\n\n" + self.review_inventory(groups)
         self.sections(name, wb_document(ledger + "\n\n" + notes), controls,
                       "PgUp/PgDn scroll  Tab actions  F7 settings  Esc back")
 
@@ -1454,21 +1516,32 @@ class Workbench:
         if self.review_scope:
             self.request("review", *self.review_scope)
 
-    def review_ledger(self):
-        rows = self.review.get("rows", [])
-        operations = sum(bool(row.get("operation", row.get("ready") and not row.get("linked")))
-                         for row in rows)
-        blocked = sum(row.get("handling") == "Blocked" and row.get("outcome") != "PENDING_ACTIVATION"
-                      for row in rows)
-        pending = sum(row.get("outcome") == "PENDING_ACTIVATION" for row in rows)
-        manual = sum(row.get("handling") == "Manual" and row.get("result") not in
-                     ("PASS", "NOT_APPLICABLE") for row in rows)
+    def review_groups(self):
+        groups = {key: [] for key, _ in REVIEW_GROUPS}
+        for row in self.review.get("rows", []):
+            groups[wb_review_group(row)].append(row)
+        return groups
+
+    def review_inventory(self, groups):
+        lines = []
+        for key, label in REVIEW_GROUPS:
+            rows = groups[key]
+            if not rows:
+                continue
+            lines.append("{} ({})".format(label.upper(), len(rows)))
+            ids = [row["id"] for row in rows]
+            for offset in range(0, len(ids), 4):
+                lines.append("  " + "   ".join(ids[offset:offset + 4]))
+        return "\n".join(lines)
+
+    def review_ledger(self, groups):
+        operations = len(groups["operations"])
         summary = "Findings {}  |  Proposals {}  |  Blocked {}  |  Manual {}  |  Pending {}".format(
-            len(rows), operations, blocked, manual, pending)
+            sum(len(rows) for rows in groups.values()), operations, len(groups["blocked"]),
+            len(groups["manual"]), len(groups["pending"]))
         if self.context.get("can_apply") and operations:
-            individual = sum(bool(row.get("operation", row.get("ready") and not row.get("linked")))
-                             and (self.context.get("review_each") or row.get("risk") != "low")
-                             for row in rows)
+            individual = sum(bool(self.context.get("review_each")) or row.get("risk") != "low"
+                             for row in groups["operations"])
             summary += "\nIndividual approvals at preview  {} of {}".format(individual, operations)
         if self.review_hidden:
             summary += "\n{} selected outside this view. They are included in the plan.".format(self.review_hidden)
@@ -1528,14 +1601,20 @@ class Workbench:
         token = self.review.get("token")
         if not token:
             return
-        if self.context.get("can_apply"):
-            title, verb = "Confirm reviewed scope", "Continue"
-            message = ("Continue with these reviewed findings? Each eligible change still needs "
-                       "attended approval. Back is selected by default.")
+        groups = self.review_groups()
+        can_apply = self.context.get("can_apply")
+        if can_apply and groups["operations"]:
+            title = "Confirm reviewed scope"
+            verb = "Continue" if self.review.get("focused") else "Start approvals"
+            count = len(groups["operations"])
+            message = ("Review {} proposed {}. You can approve or skip each change.\n"
+                       "Back is selected by default.").format(count, "change" if count == 1 else "changes")
         else:
             title, verb = "Save report", "Save report"
             message = "Save the assessment for these reviewed findings? Back is selected by default."
-        self.open_modal(title, self.review_ledger() + "\n\n" + message,
+            if can_apply:
+                message = "No changes are ready for approval. " + message
+        self.open_modal(title, self.review_ledger(groups) + "\n\n" + message,
                         [(verb, lambda: self.request("accept", token)),
                                         ("Back", self.close_modal)], default=1)
 

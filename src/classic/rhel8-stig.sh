@@ -1,6 +1,6 @@
 #!/bin/bash -p
 # rhel8-stig.sh — Attended DISA RHEL 8 assessment and remediation utility.
-# 0.5.7-dev | 2026-11-23 | Simplify run settings and reports.
+# 0.5.8-dev | 2026-11-23 | Clear batch review and audit previews.
 # Target: genuine RHEL 8.10 x86_64 with systemd. Boot behavior needs guest validation.
 # Baseline: DISA RHEL 8 STIG Version 2 Release 9 (Sunset, 2026-10-05).
 # Archive: U_RHEL_8_V2R9_STIG.zip
@@ -8,7 +8,7 @@
 #
 # 1. Metadata, compatibility, and change history
 
-readonly SCRIPT_VERSION=0.5.7-dev
+readonly SCRIPT_VERSION=0.5.8-dev
 readonly BASELINE='RHEL 8 STIG V2R9 (Sunset)'
 readonly ARCHIVE_SHA256=620bdff4d4a5b07b58817297dd5255a3f8f981a7227405c07b098588fe55cdee
 readonly ARCHIVE_URL=https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_RHEL_8_V2R9_STIG.zip
@@ -16,6 +16,9 @@ readonly ASSESSMENT_CACHE_DEFAULT=1
 
 changelog() {
     cat <<'EOF'
+0.5.8-dev (2026-11-23)
+  Separate batch and individual implementation. Show grouped outcomes and
+  the exact proposed additions for authored audit rule files.
 0.5.7-dev (2026-11-23)
   Remove the optional change ticket field from settings and reports.
 0.5.6-dev (2026-11-23)
@@ -1301,7 +1304,7 @@ edit_metadata() {
 # An exact zero-context diff is limited to recognized setting lines. Shared
 # configuration sources can contain credentials, comments and site details.
 edit_public_diff() {
-    local i=$1 path=${EDIT_PATHS[$1]} original
+    local i=$1 path=${EDIT_PATHS[$1]} original id public_additions=''
     if [[ ${EDIT_KINDS[i]} == metadata ]]; then
         printf -- '--- before %s\n+++ after %s\n- mode %s, group %s\n+ mode %s, group %s\n' \
             "$path" "$path" "${EDIT_OLD_MODE[i]}" "${EDIT_OLD_GROUP[i]}" "${EDIT_MODE[i]}" "${EDIT_GROUP[i]}"
@@ -1309,17 +1312,34 @@ edit_public_diff() {
     fi
     if ! have_tools diff; then return 0; fi
     original=$path
-    if [[ ${EDIT_PRE[i]} == absent ]]; then original=/dev/null; fi
+    if [[ ${EDIT_PRE[i]} == absent ]]; then
+        original=/dev/null
+        # Only publish exact lines authored by the built-in audit planners.
+        # A path or validator name alone does not make candidate text public.
+        if [[ $path =~ ^/etc/audit/rules\.d/90-rhel8-stig-v([0-9]{6})\.rules$ ]]; then
+            id=${BASH_REMATCH[1]}
+            case ${EDIT_VALIDATOR[i]}:$id in
+                audit_rule_dropin_validate:288831) public_additions=$(audit_rule_dropin_payload useradd '') || public_additions='' ;;
+                audit_rule_dropin_validate:274877) public_additions=$(audit_rule_dropin_payload cron '') || public_additions='' ;;
+                expansion_audit_validate_dropin:*) public_additions=$(expansion_audit_payload "V-$id") || public_additions='' ;;
+            esac
+        fi
+    fi
     {
         local status=0
         diff -U0 --label "before $path" --label "after $path" -- "$original" "$EDIT_TEMP/edit-$i" || status=$?
         (( status < 2 ))
-    } | awk '
+    } | awk -v public_additions="$public_additions" '
+        BEGIN {
+            n=split(public_additions, additions, /\n/)
+            for (i=1; i<=n; i++) public_line[additions[i]]=1
+        }
         (NR <= 2 && /^(--- before |\+\+\+ after )/) ||
           /^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@$/ {print; next}
         /^[+-]/ {
             mark=substr($0,1,1); v=substr($0,2)
-            if (v ~ /^[[:space:]]*(umask[[:space:]]+[0-7]{1,4}|(PermitRootLogin|GSSAPIAuthentication|PermitEmptyPasswords|PermitUserEnvironment|X11Forwarding|StrictModes|IgnoreRhosts|CREATE_HOME)[[:space:]]+(yes|no)|gpgcheck[[:space:]]*=[[:space:]]*[01]|idle-delay[[:space:]]*=[[:space:]]*uint32[[:space:]]+[0-9]+|disable-user-list[[:space:]]*=[[:space:]]*(true|false)|logout[[:space:]]*=[[:space:]]*\047\047|StopIdleSessionSec[[:space:]]*=[[:space:]]*[0-9]+)[[:space:]]*$/ ||
+            if ((mark == "+" && (v in public_line)) ||
+                v ~ /^[[:space:]]*(umask[[:space:]]+[0-7]{1,4}|(PermitRootLogin|GSSAPIAuthentication|PermitEmptyPasswords|PermitUserEnvironment|X11Forwarding|StrictModes|IgnoreRhosts|CREATE_HOME)[[:space:]]+(yes|no)|gpgcheck[[:space:]]*=[[:space:]]*[01]|idle-delay[[:space:]]*=[[:space:]]*uint32[[:space:]]+[0-9]+|disable-user-list[[:space:]]*=[[:space:]]*(true|false)|logout[[:space:]]*=[[:space:]]*\047\047|StopIdleSessionSec[[:space:]]*=[[:space:]]*[0-9]+)[[:space:]]*$/ ||
                 v ~ /^[[:space:]]*(ClientAliveCountMax|ClientAliveInterval|PASS_(MIN|MAX|WARN)_DAYS)[[:space:]]+[0-9]+[[:space:]]*$/ ||
                 v ~ /^[[:space:]]*(fs\.protected_(hardlinks|symlinks)|kernel\.(dmesg_restrict|perf_event_paranoid|randomize_va_space|kptr_restrict)|net\.ipv[46]\.conf\.(all|default)\.(accept_redirects|accept_source_route|send_redirects|log_martians)|net\.ipv4\.icmp_echo_ignore_broadcasts)[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]*$/ ||
                 v ~ /^[[:space:]]*(difok|minlen|minclass|[dulo]credit|maxrepeat|maxclassrepeat|maxsequence|retry|clean_requirements_on_remove)[[:space:]]*=[[:space:]]*-?[0-9]+[[:space:]]*$/ ||
@@ -13201,10 +13221,11 @@ tui_actions() {
     tui_matches || return 2
     tui_filter_text
     if [[ $MODE == apply ]]; then
+        focus_action=(Implement-Selected "Review all ${#TUI_SELECTED[@]} selected findings")
         if (( TUI_ACTION_SHORTCUT )); then
-            focus_action=(Implement 'Review implementation for the highlighted finding')
+            focus_action+=(Implement-One 'Review only the highlighted finding')
         else
-            focus_action=(Implement 'Choose one finding to implement')
+            focus_action+=(Implement-One 'Choose one finding to review separately')
         fi
     fi
     tui_choose Actions "Filters: $REPLY. Bulk actions use all ${#TUI_MATCH[@]} matching rows." \
@@ -13220,7 +13241,11 @@ tui_actions() {
     if (( result == 1 )); then return 0; elif (( result )); then return 2; fi
     action=$TUI_CHOICE
     case $action in
-        Implement) tui_choose_implementation || return 2 ;;
+        Implement-Selected)
+            tui_review
+            result=$?
+            if (( result == 0 )); then TUI_IMPLEMENT=1; elif (( result == 2 )); then return 2; fi ;;
+        Implement-One) tui_choose_implementation || return 2 ;;
         Search)
             tui_input Search 'Enter part of an ID, description or proposed action' "$TUI_SEARCH"
             result=$?
@@ -13603,13 +13628,13 @@ PY
 }
 
 tui_review() {
-    local focused=${1-} result prompt title='Review | complete selected scope'
+    local focused=${1-} result prompt action=Continue title='Review | complete selected scope'
     local IMPLEMENT_DIFF=0
     if (( ! ${#TUI_SELECTED[@]} )); then
         tui_message Review 'No findings are selected. Choose findings and open Review again.' || return 2
         return 1
     fi
-    if [[ $focused ]]; then IMPLEMENT_DIFF=1; fi
+    if [[ $focused || $MODE == apply ]]; then IMPLEMENT_DIFF=1; fi
     tui_backend_refresh review || return 2
     if [[ $focused ]]; then
         [[ ${#SCOPE[@]} == 1 && ${SCOPE[0]} == "$focused" ]] || return 2
@@ -13619,21 +13644,32 @@ tui_review() {
         tui_highlighted_view "$title" Continue preview
         result=$?
     else
-        render_apply_preview | tr -d '\000-\010\013-\037\177-\377' > "$TUI_TEMP/view.txt" || return 2
-        tui_view "$title" Continue
+        if [[ $MODE == apply ]]; then
+            title='Implement selected findings'
+            if (( ${#PREVIEW_KEY[@]} )); then action='Start approvals'; else action='Save report'; fi
+        fi
+        {
+            if [[ $MODE == apply ]]; then render_apply_inventory || return 2; fi
+            render_apply_preview
+        } | tr -d '\000-\010\013-\037\177-\377' > "$TUI_TEMP/view.txt" || return 2
+        tui_view "$title" "$action"
         result=$?
     fi
     if (( result == 0 )); then
         if [[ $focused ]]; then
             prompt="Continue with $focused only?"$'\n''Any proposed change still needs attended approval.'
         elif [[ $MODE == apply ]]; then
-            prompt="Continue with all ${#TUI_SELECTED[@]} selected findings, including $TUI_HIDDEN hidden by the current filters?"
-            prompt+=$'\n''Each change still needs attended approval.'
+            prompt="${#TUI_SELECTED[@]} selected | ${#PREVIEW_KEY[@]} proposed changes | $TUI_HIDDEN hidden by filters."
+            if (( ${#PREVIEW_KEY[@]} )); then
+                prompt+=$'\n''Start decisions for the proposed changes? Each still needs attended approval.'
+            else
+                prompt+=$'\n''Save the findings and follow-up actions to a report?'
+            fi
         else
             prompt="Continue with all ${#TUI_SELECTED[@]} selected findings, including $TUI_HIDDEN hidden by the current filters?"
             prompt+=$'\n''This mode only assesses and writes reports.'
         fi
-        tui_confirm 'Confirm reviewed scope' "$prompt" Continue Back
+        tui_confirm 'Confirm reviewed scope' "$prompt" "$action" Back
         result=$?
         if (( result == 0 )); then return 0; fi
     fi
@@ -13848,14 +13884,47 @@ assess_one() {
 }
 
 render_apply_finding() {
-    local id=$1 plan=$2
+    local id=$1 plan=$2 delta=${3-${DISPLAY_DIFF[$1]-}}
     printf '%s | CAT %s | %s\n%s\n' "$id" "${CATEGORY[$id]}" "${AFTER[$id]}" "${TITLE[$id]}" || return 1
     printf 'Evidence: %s\n' "${DETAIL[$id]}" || return 1
     if [[ $plan ]]; then printf '%s\n' "$plan" || return 1; fi
-    if [[ $MODE == diff && ${DISPLAY_DIFF[$id]-} && ${HANDLING[$id]-} != attended-action ]]; then
-        printf '%s\n' "${DISPLAY_DIFF[$id]}" || return 1
+    if [[ $delta && ${HANDLING[$id]-} != attended-action ]]; then
+        printf '%s\n' "$delta" || return 1
     fi
     printf '\n'
+}
+
+render_apply_inventory() {
+    local id group offset
+    local -a groups=('Proposed changes' 'Included in another change' 'Manual work or evidence' \
+        'Blocked' 'Pending activation' 'Already compliant' 'Not applicable' 'Skipped' 'Check errors')
+    local -a ids=()
+    local -A members=()
+    for id in "${SCOPE[@]}"; do
+        if [[ ${PREVIEW_KEY[$id]+planned} ]]; then group='Proposed changes'
+        elif [[ ${PLANNED_BY[$id]+grouped} ]]; then group='Included in another change'
+        else
+            case ${ACTIONS[$id]}:${AFTER[$id]} in
+                BLOCKED:*) group='Blocked' ;;
+                PENDING_ACTIVATION:*) group='Pending activation' ;;
+                SKIPPED:*) group='Skipped' ;;
+                *:PASS) group='Already compliant' ;;
+                *:NOT_APPLICABLE) group='Not applicable' ;;
+                *:ERROR) group='Check errors' ;;
+                *) group='Manual work or evidence' ;;
+            esac
+        fi
+        members[$group]+="$id "
+    done
+    printf '%s selected | %s proposed changes\n' "${#SCOPE[@]}" "${#PREVIEW_KEY[@]}" || return 1
+    for group in "${groups[@]}"; do
+        [[ ${members[$group]+listed} ]] || continue
+        read -r -a ids <<< "${members[$group]}"
+        printf '\n%s (%s)\n' "$group" "${#ids[@]}" || return 1
+        for (( offset=0; offset<${#ids[@]}; offset+=6 )); do
+            printf '  %s\n' "${ids[*]:offset:6}" || return 1
+        done
+    done
 }
 
 render_apply_preview() {
@@ -13952,7 +14021,7 @@ apply_choice() {
             d|details)
                 printf '\n%sCurrent proposal for %s (%s risk)%s\n' \
                     "$heading" "$id" "$risk" "$reset" >&"$TTY_FD" || return 2
-                render_apply_finding "$id" "$PLAN_TEXT" |
+                render_apply_finding "$id" "$PLAN_TEXT" "${PLAN_DIFF-}" |
                     display_terminal_text "$TTY_FD" >&"$TTY_FD" || return 2
                 continue ;;
         esac
@@ -14024,6 +14093,7 @@ commit_reviewed_plan() {
 
 apply_reviewed_rule() {
     local id=$1 position=$2 total=$3 presented_key=${PREVIEW_KEY[$1]} result revised=0 allow_all reply approval
+    local IMPLEMENT_DIFF=${GUI:-0}
     REVIEWED_GROUP=''
     if (( MUTATION_STOP )); then
         ACTIONS[$id]=BLOCKED DISPLAY_PLAN[$id]='earlier interruption or operation failure stopped mutation'

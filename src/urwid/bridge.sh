@@ -167,8 +167,11 @@ urwid_rows() {
 }
 
 urwid_state() {
-    local reset=$1 can_apply=false diff_available=false elevated=false assessed=false
-    if [[ $MODE == apply ]]; then can_apply=true; fi
+    local reset=$1 can_apply=false diff_available=false elevated=false assessed=false assess_on_open=false
+    if [[ $MODE == apply ]]; then
+        can_apply=true
+        if (( SELECT_EXPLICIT )); then assess_on_open=true; fi
+    fi
     if have_tools diff; then diff_available=true; fi
     if (( EUID == 0 )); then elevated=true; fi
     if (( URWID_ASSESSED )); then assessed=true; fi
@@ -180,9 +183,9 @@ urwid_state() {
         arch "${ARCH:-unavailable}" kernel "${KERNEL:-unavailable}" boot_mode "${BOOT_MODE:-unavailable}" \
         archive_sha256 "$ARCHIVE_SHA256" script_sha256 "${SCRIPT_HASH:-unavailable}" \
         ckl_path "$CKL_PATH" ckl_sha256 "$CKL_SHA256" resume "$RESUME_ID" operator "${OPERATOR-}"
-    printf ',"can_apply":%s,"diff_available":%s,"elevated":%s,"defer":%s,"defer_required":%s,"assessed":%s,"scope_count":%s,"review_each":%s},' \
+    printf ',"can_apply":%s,"diff_available":%s,"elevated":%s,"defer":%s,"defer_required":%s,"assessed":%s,"scope_count":%s,"review_each":%s,"assess_selected_on_open":%s},' \
         "$can_apply" "$diff_available" "$elevated" "$DEFER" "$URWID_DEFER_CAP" "$assessed" \
-        "${#TUI_IDS[@]}" "$REVIEW_EACH"
+        "${#TUI_IDS[@]}" "$REVIEW_EACH" "$assess_on_open"
     printf '"reset_selection":%s,"rows":' "$reset"
     if (( URWID_ASSESSED )); then urwid_rows; else printf '[]'; fi
     printf '}\n'

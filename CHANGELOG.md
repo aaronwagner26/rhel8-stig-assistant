@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.8-urwid-dev and 0.5.8-dev
+
+- Open Urwid Findings directly when Apply is launched with an explicit selection. Show assessment progress and keep Run settings available from Findings.
+- Separate batch implementation from the focused finding. List proposed changes, grouped findings, and findings that need follow-up before starting approvals.
+- Put the before/after diff near the Urwid approval decision and show the exact proposed audit-rule additions for V-288831 and other supported audit drop-ins.
+
 ## 0.6.7-urwid-dev
 
 - Return from a plan or diff to the existing Findings list. Back preserves the selection, filters, sort order, and focused finding. **F8** still reassesses the available scope, and opening a new preview checks the requested findings.

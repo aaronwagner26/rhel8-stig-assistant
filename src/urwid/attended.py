@@ -183,48 +183,49 @@ class _AttendedPrompt:
                 self.request["position"], self.request["total"])
         lines = [("accent", self.request.get("title")),
                  ("success" if risk == "low" else "warning", risk.upper() + " operational risk"),
-                 ("muted", "Skip is the default. Approval covers the targets in this reviewed change."),
-                 ("base", "")]
+                 ("muted", "Skip is the default. Approve applies this reviewed change.")]
         if self.request.get("revised"):
-            lines.extend([("warning", "Plan changed. Review this version and decide separately."),
-                          ("base", "")])
+            lines.append(("warning", "Plan changed. Review this version and decide separately."))
         elif self.request.get("review_each"):
-            lines.extend([("muted", "Individual review is enabled."), ("base", "")])
+            lines.append(("muted", "Individual review is enabled."))
+        if self.allow_all:
+            lines.append(("muted", "A also approves remaining unchanged, eligible low-risk changes."))
         plan = _att_text(self.request.get("plan"))
         diff = _att_text(self.request.get("diff"))
         if diff and plan.startswith(diff + "\n"):
             plan = plan[len(diff) + 1:]
-        if details:
-            lines += [("section", "Assessment evidence"),
-                      ("base", self.request.get("evidence") or "No additional evidence was recorded."),
-                      ("base", "")]
-        lines += [("section", "Proposed change"), ("base", plan or "No plan text was supplied.")]
+        delta = []
         if diff:
-            lines += [("base", ""), ("section", "Before / after"),
-                      ("muted", "- Current    + Proposed")]
+            delta = [("base", ""), ("section", "Before / after"),
+                     ("muted", "- Current    + Proposed")]
             for line in diff.splitlines():
                 if line.startswith(("--- ", "+++ ", "@@ ")):
                     style = "diff_meta"
                 elif line.startswith("-"):
-                    style = "danger"
+                    style = "diff_remove"
                 elif line.startswith("+"):
-                    style = "success"
+                    style = "diff_add"
                 else:
                     style = "base"
-                lines.append((style, line))
+                delta.append((style, line))
+        proposal = [("base", ""), ("section", "Proposed change"),
+                    ("base", plan or "No plan text was supplied.")]
+        if details:
+            lines += [("base", ""), ("section", "Assessment evidence"),
+                      ("base", self.request.get("evidence") or "No additional evidence was recorded.")]
+            lines += proposal + delta
+        else:
+            lines += delta + proposal
         actions = [
             ("Skip", lambda: self.finish(1), "warning"),
             ("Approve", lambda: self.finish(0), "success"),
+            ("Overview" if details else "Details", lambda: self.approve(not details), "button"),
+            ("Stop", lambda: self.finish(2), "button"),
         ]
         if self.allow_all:
-            lines += [("base", ""), ("muted",
-                       "Approve low-risk rest also covers unchanged, eligible low-risk plans. "
-                       "Other changes still ask separately.")]
             actions.append(("Low-risk rest", lambda: self.finish(3), "success"))
-        actions.append(("Overview" if details else "Details",
-                        lambda: self.approve(not details), "button"))
         self.screen("Approve change", id_ + step, _att_block(lines), actions, 0,
-                    "Y approve | N skip | D details | Esc stop"
+                    "Enter selects | Y approve | N skip | D details | Esc stop"
                     + (" | A low-risk rest" if self.allow_all else ""))
 
     @staticmethod

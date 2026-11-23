@@ -46,6 +46,10 @@ From the directory containing the verified script, launch Status with JSON repor
 
 Use `--diff` or `--dry-run` to inspect eligible changes before a maintenance window. The Apply entry point is explicit, such as `--gui --apply` or `--apply --only V-ID`. The operational risk ceiling defaults to High and can be lowered with `--max-risk` or from Run settings.
 
+In Urwid, `--gui --apply --only V-ID,...` checks those IDs and opens Findings with them selected. Press `F7` to open Run settings. To review the batch, choose **Actions → Implement selected** or press `F5`. Use **Implement only V-ID** or `F6` for the focused finding. In Classic, **Actions** offers separate **Implement-Selected** and **Implement-One** entries.
+
+The batch review lists the selected IDs under proposed changes, findings covered by another change, manual work, blocked findings, pending activation, and other outcomes. Selections hidden by filters are included. Use **Start approvals** or **Back** after reviewing the plan. A batch with no eligible changes offers **Save report**. In Urwid approval, the change number and before/after diff appear above the decision buttons. Use `D` for the evidence and full plan, `Y` to approve, `N` or default `Enter` to skip, or **Stop** to end the approval sequence.
+
 Apply and rollback require the verified script at a trusted path. The script and its parent directories must be root-owned, with group and other write access disabled. The preflight rejects symlinks in that path. Keep the corresponding script build with the run records you may need to reopen.
 
 The tool shows the complete selected plan first. Confirming the reviewed scope advances to attended decisions. Scope confirmation defaults to **Back** and per-change approval defaults to **Skip**. When offered, `A` approves the current and remaining eligible unchanged low-risk operations. Sensitive or revised changes require individual approval. Use `--review-each` to ask about every operation. End-of-input stops writes. When reviewed scope or effective site inputs change, prepare and review a fresh plan.
