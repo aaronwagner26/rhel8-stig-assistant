@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.4-urwid-dev and 0.5.5-dev
+
+- Add 96 rules from the pinned DISA RHEL 8 V2R9 benchmark. Urwid and Classic share 164 of the 371 IDs.
+- Expand assessment and conditional attended remediation for audit, network and SSH, account defaults, and local system configuration. The rule catalog identifies the supported handling and prerequisites for each addition.
+- Build separate standalone scripts and SHA-256 sidecars for Urwid and Classic.
+- Validate the expanded behavior using isolated Linux fixtures. Live RHEL 8.10 guest acceptance remains pending. [Expansion catalog](docs/expansion-rules.md) · [Validation record](docs/validation-0.6.4.md)
+
 ## 0.6.3-urwid-dev
 
 Released as a development build from the November 20, 2026 validation.
@@ -25,4 +32,4 @@ Released as a development build from the November 20, 2026 validation.
 - Introduce the Urwid terminal interface, including focused evidence, diffs, attended decisions, and report and recovery views.
 - Reuse the pinned classic 0.5.4 rule engine, CLI, plan signatures, and guarded transactions.
 
-Earlier development history is available from `rhel8-stig-urwid.sh --changelog`. See [validation](docs/validation.md) for the release bytes and test scope.
+Earlier development history is available from `rhel8-stig-urwid.sh --changelog`. See the [0.6.3 validation record](docs/validation.md) for that release's exact bytes and test scope.

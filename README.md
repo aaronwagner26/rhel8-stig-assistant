@@ -1,16 +1,23 @@
 # RHEL 8 STIG Assistant
 
-An independent, attended STIG assessment and remediation tool for RHEL 8.10 x86_64. Use the Urwid terminal interface to select findings, review each change, and recheck the host afterward. The release runs as one Bash script.
+An independent, attended STIG assessment and remediation tool for RHEL 8.10 x86_64. Use the Urwid terminal interface to select findings, review each change, and recheck the host afterward. The Classic edition provides the same rule engine through the CLI and a `dialog` interface. Each edition runs as a standalone Bash script.
 
-**Current development release** `0.6.3-urwid-dev`
+**Current development versions** Urwid `0.6.4-urwid-dev` and Classic `0.5.5-dev`
 
-**Pinned baseline** DISA RHEL 8 STIG Version 2 Release 9 (Sunset), with 68 registered rules. [DISA STIG announcements](https://www.cyber.mil/stigs/stig-announcements)
+**Pinned baseline** DISA RHEL 8 STIG Version 2 Release 9 (Sunset), with 164 of 371 rules registered in both editions. [DISA STIG announcements](https://www.cyber.mil/stigs/stig-announcements)
 
-Coverage is limited to the registered rules. Some rules provide assessment and administrator guidance, and eligible changes require attended approval. Check your organization's approved baseline before using results as compliance evidence. [Rule coverage](docs/rule-coverage.md)
+The catalog records which registered rules support attended remediation and which provide evidence or administrator guidance. Eligible changes require approval. Check your organization's approved baseline before using results as compliance evidence. [Rule coverage](docs/rule-coverage.md)
 
 ## Get started
 
-Download `rhel8-stig-urwid.sh` and its `.sha256` file, or build the same files from source. Run the block from the directory containing both files on a disposable RHEL 8.10 guest. [GitHub release](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/tag/v0.6.3-urwid-dev) · [Build instructions](#build-from-source)
+Download the script and its checksum for the edition you want, or build both from source. Use a disposable RHEL 8.10 guest for the first run. [GitHub release](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/tag/v0.6.4-urwid-dev) · [Build instructions](#build-from-source)
+
+| Edition | Script | SHA-256 |
+| --- | --- | --- |
+| Urwid `0.6.4-urwid-dev` | [rhel8-stig-urwid.sh](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.4-urwid-dev/rhel8-stig-urwid.sh) | [rhel8-stig-urwid.sh.sha256](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.4-urwid-dev/rhel8-stig-urwid.sh.sha256) |
+| Classic `0.5.5-dev` | [rhel8-stig.sh](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.4-urwid-dev/rhel8-stig.sh) | [rhel8-stig.sh.sha256](https://github.com/aaronwagner26/rhel8-stig-assistant/releases/download/v0.6.4-urwid-dev/rhel8-stig.sh.sha256) |
+
+Run the Urwid quick start from the directory containing its script and checksum.
 
 ```bash
 (
@@ -23,7 +30,19 @@ Download `rhel8-stig-urwid.sh` and its `.sha256` file, or build the same files f
 )
 ```
 
-**Status** assesses settings and saves protected reports. Begin with it to get familiar with the workspace. **Apply** requires an explicit `--apply`, root, an interactive terminal, and attended approval. The 0.6.3 development release was tested offline with signed RHEL runtime packages in a Rocky Linux 8.10 container. Interactive acceptance on a genuine RHEL 8.10 guest is pending. [Validation record](docs/validation.md)
+For the Classic CLI, run the equivalent read-only check after verifying its checksum.
+
+```bash
+(
+  set -e
+  sha256sum --check rhel8-stig.sh.sha256
+  chmod 0755 rhel8-stig.sh
+  ./rhel8-stig.sh --version
+  ./rhel8-stig.sh --status --only V-230494,V-230498
+)
+```
+
+**Status** assesses settings and saves protected reports. **Apply** requires an explicit `--apply`, root, an interactive terminal, and attended approval. The 0.6.4 release validation used isolated Linux fixtures. Interactive acceptance on a genuine RHEL 8.10 guest is pending. [Validation record](docs/validation-0.6.4.md)
 
 | To do this | Start here |
 | --- | --- |
@@ -33,7 +52,7 @@ Download `rhel8-stig-urwid.sh` and its `.sha256` file, or build the same files f
 | Preview eligible changes | `./rhel8-stig-urwid.sh --diff --only V-230494,V-230498` |
 | Review saved work | Launch `--gui --status` and press `F9` in **Run settings** |
 
-The full-screen UI uses Python 3 and Urwid. For legacy CKL import, install Python 3 with Expat. Full file-content diffs use `diffutils`. `--ui-check` reports what the guest can use, and ordinary CLI modes work without Urwid. See the [operator guide](docs/operator-guide.md) for runtime details, review and approval behavior, and a Status walkthrough.
+The Urwid interface uses Python 3 and Urwid. The Classic interface uses `dialog`. Legacy CKL import requires Python 3 with Expat, and full file-content diffs use `diffutils`. In the Urwid edition, `--ui-check` reports what the guest can use. Both editions support ordinary CLI modes without their interface packages. [Operator guide](docs/operator-guide.md)
 
 ## Interface
 
@@ -51,12 +70,13 @@ The screenshots use synthetic fixture data.
 
 ```bash
 python3 tools/build.py
+bash -n dist/rhel8-stig.sh
 bash -n dist/rhel8-stig-urwid.sh
-(cd dist && sha256sum --check rhel8-stig-urwid.sh.sha256)
+(cd dist && sha256sum --check rhel8-stig.sh.sha256 rhel8-stig-urwid.sh.sha256)
 python3 tests/smoke.py
 ```
 
-The build checks the pinned classic backend digest and embeds the Urwid sources in `dist/rhel8-stig-urwid.sh`. The script contents are reproducible. The run-time prerequisite check is available from the built script. The smoke check uses Bash and the Python standard library. [Optional Urwid fixture tests](tests/urwid/README.md)
+The build checks the Classic source digest, emits that source unchanged as `dist/rhel8-stig.sh`, and embeds the Urwid sources in `dist/rhel8-stig-urwid.sh`. Each script has a SHA-256 sidecar. The smoke check uses Bash and the Python standard library. [Optional Urwid fixture tests](tests/urwid/README.md)
 
 | Path | Contents |
 | --- | --- |
@@ -66,13 +86,13 @@ The build checks the pinned classic backend digest and embeds the Urwid sources 
 | `tests/` | Regression tests and synthetic fixtures |
 | `examples/` | Sample scope and site settings |
 | `docs/` | Operator guide, screenshots, and validation notes |
-| `dist/` | Locally generated script and checksum |
+| `dist/` | Locally generated scripts and checksums |
 
 ## Project records
 
 - [Architecture](docs/architecture.md) explains the source layout and how the terminal interface uses the Bash engine.
 - [Changelog](CHANGELOG.md) describes the development versions.
-- [Validation](docs/validation.md) records evidence for the exact 0.6.3 bytes.
+- [Validation](docs/validation-0.6.4.md) records fixture evidence and the remaining RHEL guest checks for this release.
 - [Release process](docs/releasing.md) covers changes, versioning, verification, and publication.
 - [Contributing](CONTRIBUTING.md) covers source changes and operator feedback.
 - [Security](SECURITY.md) explains how to share a concern privately.

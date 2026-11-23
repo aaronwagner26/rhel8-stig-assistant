@@ -1,8 +1,10 @@
 # RHEL 8 STIG V2R9 rule matrix
 
+The Classic `0.5.5-dev` and Urwid `0.6.4-urwid-dev` releases register 164 of the 371 IDs in the pinned manual XCCDF. This matrix describes the original 68 rules. The expansion catalog lists the 96 additional IDs, their handling, and their operational risk. [Expansion catalog](expansion-rules.md) · [Current release validation](validation-0.6.4.md)
+
 ## Official policy source and lifecycle
 
-Retrieved November 20, 2026. The local SHA-256 identifies the archive bytes obtained over HTTPS from DISA. The archive contains the manual RHEL 8 STIG XCCDF and supporting material. The XCCDF identifies benchmark `RHEL_8_STIG`, version 2, release 9, benchmark date September 30, 2026. The 68 registered rules include 11 CAT I, 51 CAT II, and 6 CAT III findings. [DISA V2R9 archive](https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_RHEL_8_V2R9_STIG.zip)
+Retrieved November 20, 2026. The local SHA-256 identifies the archive bytes obtained over HTTPS from DISA. The archive contains the manual RHEL 8 STIG XCCDF and supporting material. The XCCDF identifies benchmark `RHEL_8_STIG`, version 2, release 9, benchmark date September 30, 2026. The original 68 rules include 11 CAT I, 51 CAT II, and 6 CAT III findings. [DISA V2R9 archive](https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_RHEL_8_V2R9_STIG.zip)
 
 | Source file | SHA-256 |
 |---|---|
@@ -16,7 +18,7 @@ Comparison with the official V2R8 archive found V-288829 and V-288831 newly pres
 
 ## Implementation and validation
 
-This matrix describes the 68 default rules in the pinned [0.5.4-dev backend](../src/classic/rhel8-stig.sh) used by the Urwid release. The XCCDF provides the official titles, CAT severities and check and fix references. The operational risk column describes the potential impact of proposed remediation. See the [release validation record](validation.md) for the scope of testing.
+The original 68 rules came from the pinned `0.5.4-dev` backend used by Urwid `0.6.3-urwid-dev`. The XCCDF provides the official titles, CAT severities and check and fix references. The operational risk column describes the potential impact of proposed remediation. [0.5.4-dev source](https://github.com/aaronwagner26/rhel8-stig-assistant/blob/v0.6.3-urwid-dev/src/classic/rhel8-stig.sh) · [0.6.3 validation record](validation.md)
 
 - **Attended module staging** covers 7 rules. The script assesses the module and may create a dedicated policy file for an eligible, unused module after individual approval. Reboot and any applicable boot-image work require an administrator. The supported restore removes only the unchanged file created by that run.
 - **Attended file or metadata plans** cover 44 additional rules for supported local layouts. Status, dry-run and the full pre-approval apply preview show the proposed changes. Unchanged low-risk operations can share an attended bulk approval. Medium-risk, high-risk and revised operations need individual approval. A file transaction validates candidate content where a supported checker exists. Recovery can restore authorized file content or metadata within the verified operation's limits. Service, mount or boot activation requires the stated separate action and proof on the running system.

@@ -2,12 +2,13 @@
 
 ## Target and dependencies
 
-The host target is RHEL 8.10 x86_64 with systemd. Use a disposable guest for initial acceptance. `--version`, `--list`, and `--explain V-ID` are catalog and build information. `--ui-check` reports platform and optional runtime readiness.
+The host target is RHEL 8.10 x86_64 with systemd. Use a disposable guest for initial acceptance. `--version`, `--list`, and `--explain V-ID` report catalog and build information in both editions. The Urwid edition adds `--ui-check` for platform and optional runtime readiness.
 
 | Capability | Requirements |
 | --- | --- |
-| CLI assessment and preview | Bash 4.4 or later and the host tools checked by `--ui-check` |
+| CLI assessment and preview | Bash 4.4 or later and any native tools required by the selected checks |
 | Urwid terminal interface | A controlling terminal, Python 3, and Urwid. Use a display at least 56 columns by 18 rows. |
+| Classic terminal interface | A controlling terminal and `dialog` |
 | Legacy DISA CKL import | Python 3 with the standard-library Expat parser |
 | File-content diffs | `diffutils` |
 | Apply and rollback | Root, an interactive terminal, an eligible operation, and attended approval |
@@ -34,7 +35,7 @@ From the directory containing the verified script, launch Status with JSON repor
 ## Scope, formats, and site inputs
 
 - Repeat `--only` or combine it with `--ids-file` for a union of explicit IDs. The file format is one ID per line with optional whole-line `#` comments and blank lines. `--skip` takes precedence. See the [sample scope](../examples/scope.txt).
-- With no explicit selector, the CLI assesses the registered 68-ID scope. With no explicit selection source, the Urwid workspace starts with its findings unchecked.
+- With no explicit selector, either CLI assesses the registered 164-ID scope. With no explicit selection source, the Urwid workspace starts with its findings unchecked. [Rule coverage](rule-coverage.md)
 - `--ckl FILE` imports Open findings from legacy DISA CKL XML. It narrows any explicit selection, applies exact benchmark and rule revision checks, and requires acknowledgment for missing or mismatched asset metadata. The import starts a fresh assessment. CKLB is a separate format.
 - `--config FILE` accepts supported site values. Record only settings authorized for that host. See the [sample site file](../examples/site.conf).
 - `--format text|json|csv` selects the report format. Use JSON for saved-run comparison. Text output for Status, Dry run, and Diff sorts by Vuln-ID by default. Add `--group-by result` to group the report by outcome.

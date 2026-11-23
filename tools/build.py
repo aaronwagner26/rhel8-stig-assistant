@@ -1,4 +1,4 @@
-"""Assemble the Urwid edition from the pinned, installed 0.5.4 backend."""
+"""Build the classic and Urwid editions from the same pinned backend."""
 
 import hashlib
 from pathlib import Path
@@ -8,9 +8,11 @@ import re
 ROOT = Path(__file__).resolve().parent.parent
 URWID_SOURCE = ROOT / "src" / "urwid"
 BACKEND = ROOT / "src" / "classic" / "rhel8-stig.sh"
-BACKEND_SHA256 = "1cd53bc1474de9c23b8bcc1ccd91e004c101fa6b393be8556514c7bf4ddf4333"
-VERSION = "0.6.3-urwid-dev"
+BACKEND_SHA256 = "c173ebec78a64644d8af0b3700a77d7e5573081c5815f9b0b30a9c4883d4cf57"
+CLASSIC_VERSION = "0.5.5-dev"
+VERSION = "0.6.4-urwid-dev"
 OUTPUT = ROOT / "dist" / "rhel8-stig-urwid.sh"
+CLASSIC_OUTPUT = OUTPUT.with_name(BACKEND.name)
 DELIMITER = "__RHEL_STIG_EMBEDDED_URWID__"
 ENTRY = 'if [[ ${BASH_SOURCE[0]} == "$0" ]]; then\n'
 LEGACY_INTERFACE = "# Interactive findings worklist."
@@ -61,15 +63,19 @@ def keep_shared_tui_helpers(shell):
 def build():
     baseline = BACKEND.read_bytes()
     if hashlib.sha256(baseline).hexdigest() != BACKEND_SHA256:
-        raise SystemExit("The pinned 0.5.4-dev backend does not match its release hash.")
+        raise SystemExit("The pinned {} backend does not match its release hash.".format(CLASSIC_VERSION))
     shell = keep_shared_tui_helpers(baseline.decode("utf-8"))
     shell = replace_once(shell, "# rhel8-stig.sh — Attended",
                          "# rhel8-stig-urwid.sh — Attended")
-    shell = replace_once(shell, "# 0.5.4-dev | 2026-11-20 | Report summaries, result groups and applied IDs.",
-                         "# {} | 2026-11-20 | Urwid prototype, pinned remediation backend.".format(VERSION))
-    shell = replace_once(shell, "readonly SCRIPT_VERSION=0.5.4-dev",
+    shell = replace_once(shell, "# {} | 2026-11-23 | Shared 164-rule coverage expansion.".format(CLASSIC_VERSION),
+                         "# {} | 2026-11-23 | Urwid workbench with 164 shared rules.".format(VERSION))
+    shell = replace_once(shell, "readonly SCRIPT_VERSION=" + CLASSIC_VERSION,
                          "readonly SCRIPT_VERSION=" + VERSION)
-    shell = replace_once(shell, "0.5.4-dev (2026-11-20)", VERSION + """ (2026-11-20)
+    classic_heading = CLASSIC_VERSION + " (2026-11-23)"
+    shell = replace_once(shell, classic_heading, VERSION + """ (2026-11-23)
+  Extend the shared catalog with 96 additional attended remediation paths.
+  Show the same checks, previews and activation requirements in both editions.
+0.6.3-urwid-dev (2026-11-20)
   Preserve Findings focus on resize and return to sort headers from evidence.
   Keep assessment comparisons clear when a report action is unfamiliar.
   Keep the Workbench connected while a shell prompt timeout is inherited.
@@ -87,7 +93,7 @@ def build():
   Add the Urwid terminal workspace, preflight, focused evidence and diffs,
   attended approvals, and report and recovery views. Preserve the 0.5.4-dev
   rule engine, existing CLI, plan signatures, and guarded transactions.
-0.5.4-dev (2026-11-20)""")
+""" + classic_heading)
     shell = replace_once(shell, "Usage: rhel8-stig.sh [mode] [options]",
                          "Usage: rhel8-stig-urwid.sh [mode] [options]")
     shell = replace_once(shell, "  --version | --changelog | --self-hash | --help",
@@ -244,15 +250,19 @@ a controlling terminal. With no explicit selection source it starts unchecked.""
     bridge = (URWID_SOURCE / "bridge.sh").read_text(encoding="utf-8").strip()
     hooks = (URWID_SOURCE / "hooks.sh").read_text(encoding="utf-8").strip()
     result = replace_once(shell, ENTRY, "\n".join((embed, bridge, hooks, "", ENTRY)))
-    data = result.encode("utf-8")
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    temporary = OUTPUT.with_suffix(".sh.tmp")
+    write_artifact(CLASSIC_OUTPUT, baseline)
+    write_artifact(OUTPUT, result.encode("utf-8"))
+
+
+def write_artifact(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".sh.tmp")
     temporary.write_bytes(data)
-    temporary.replace(OUTPUT)
+    temporary.replace(path)
     digest = hashlib.sha256(data).hexdigest()
-    OUTPUT.with_suffix(".sh.sha256").write_bytes(
-        "{}  {}\n".format(digest, OUTPUT.name).encode("ascii"))
-    print("{}  {}".format(digest, OUTPUT.name))
+    path.with_suffix(".sh.sha256").write_bytes(
+        "{}  {}\n".format(digest, path.name).encode("ascii"))
+    print("{}  {}".format(digest, path.name))
 
 
 if __name__ == "__main__":

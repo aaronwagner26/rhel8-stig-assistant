@@ -1,6 +1,6 @@
 #!/bin/bash -p
 # rhel8-stig.sh — Attended DISA RHEL 8 assessment and remediation utility.
-# 0.5.4-dev | 2026-11-20 | Report summaries, result groups and applied IDs.
+# 0.5.5-dev | 2026-11-23 | Shared 164-rule coverage expansion.
 # Target: genuine RHEL 8.10 x86_64 with systemd. Boot behavior needs guest validation.
 # Baseline: DISA RHEL 8 STIG Version 2 Release 9 (Sunset, 2026-10-05).
 # Archive: U_RHEL_8_V2R9_STIG.zip
@@ -8,13 +8,17 @@
 #
 # 1. Metadata, compatibility, and change history
 
-readonly SCRIPT_VERSION=0.5.4-dev
+readonly SCRIPT_VERSION=0.5.5-dev
 readonly BASELINE='RHEL 8 STIG V2R9 (Sunset)'
 readonly ARCHIVE_SHA256=620bdff4d4a5b07b58817297dd5255a3f8f981a7227405c07b098588fe55cdee
 readonly ARCHIVE_URL=https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_RHEL_8_V2R9_STIG.zip
 
 changelog() {
     cat <<'EOF'
+0.5.5-dev (2026-11-23)
+  Expand the default coverage from 68 to 164 V2R9 rules. Add guarded
+  password policy, audit, sysctl, SSH, metadata, and desktop plans.
+  Keep proofs of effective state and activation separate from file staging.
 0.5.4-dev (2026-11-20)
   Start read-only text reports with outcome counts. Group by result when
   requested, keeping Vuln-ID order within each group. List applied IDs
@@ -102,7 +106,7 @@ Options for run modes:
   --no-color                     Same as --color never.
   --verbose                      Show redacted detail in terminal diagnostics.
 
-Repeated --only and --ids-file form a union. The reviewed 68-ID default applies
+Repeated --only and --ids-file form a union. The reviewed 164-ID default applies
 only when no explicit selector is supplied. ID files accept blank lines and
 whole-line # comments. Status and dry-run write protected reports and may use
 temporary files. Treat every unresolved finding as open until independently verified.
@@ -1156,7 +1160,7 @@ edit_fail() {
 edit_safe_path() {
     local path=$1 parent owner mode
     valid_output_path "$path" || return 1
-    case $path in /etc/*|/var/log/*|/usr/bin/*|/usr/sbin/*|/usr/local/bin/*|/usr/local/sbin/*|/tmp|/var/tmp|/boot/grub2/grubenv) ;;
+    case $path in /etc/*|/var/log|/var/log/*|/usr/bin/*|/usr/sbin/*|/usr/local/bin/*|/usr/local/sbin/*|/tmp|/var/tmp|/boot/grub2/grubenv) ;;
         /home/*/.bash_profile|/home/*/.bash_login|/home/*/.profile|/home/*/.bashrc)
             [[ $path =~ ^/home/[a-zA-Z0-9_.@-]+/\.(bash_profile|bash_login|profile|bashrc)$ ]] || return 1 ;;
         *) return 1 ;;
@@ -1294,7 +1298,11 @@ edit_public_diff() {
           /^@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@$/ {print; next}
         /^[+-]/ {
             mark=substr($0,1,1); v=substr($0,2)
-            if (v ~ /^[[:space:]]*(umask[[:space:]]+[0-7]{1,4}|(PermitRootLogin|GSSAPIAuthentication)[[:space:]]+(yes|no)|gpgcheck[[:space:]]*=[[:space:]]*[01]|idle-delay[[:space:]]*=[[:space:]]*uint32[[:space:]]+[0-9]+|disable-user-list[[:space:]]*=[[:space:]]*(true|false)|logout[[:space:]]*=[[:space:]]*\047\047|StopIdleSessionSec[[:space:]]*=[[:space:]]*[0-9]+)[[:space:]]*$/)
+            if (v ~ /^[[:space:]]*(umask[[:space:]]+[0-7]{1,4}|(PermitRootLogin|GSSAPIAuthentication|PermitEmptyPasswords|PermitUserEnvironment|X11Forwarding|StrictModes|IgnoreRhosts|CREATE_HOME)[[:space:]]+(yes|no)|gpgcheck[[:space:]]*=[[:space:]]*[01]|idle-delay[[:space:]]*=[[:space:]]*uint32[[:space:]]+[0-9]+|disable-user-list[[:space:]]*=[[:space:]]*(true|false)|logout[[:space:]]*=[[:space:]]*\047\047|StopIdleSessionSec[[:space:]]*=[[:space:]]*[0-9]+)[[:space:]]*$/ ||
+                v ~ /^[[:space:]]*(ClientAliveCountMax|ClientAliveInterval|PASS_(MIN|MAX|WARN)_DAYS)[[:space:]]+[0-9]+[[:space:]]*$/ ||
+                v ~ /^[[:space:]]*(fs\.protected_(hardlinks|symlinks)|kernel\.(dmesg_restrict|perf_event_paranoid|randomize_va_space|kptr_restrict)|net\.ipv[46]\.conf\.(all|default)\.(accept_redirects|accept_source_route|send_redirects|log_martians)|net\.ipv4\.icmp_echo_ignore_broadcasts)[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]*$/ ||
+                v ~ /^[[:space:]]*(difok|minlen|minclass|[dulo]credit|maxrepeat|maxclassrepeat|maxsequence|retry|clean_requirements_on_remove)[[:space:]]*=[[:space:]]*-?[0-9]+[[:space:]]*$/ ||
+                v ~ /^[[:space:]]*(local_events[[:space:]]*=[[:space:]]*(yes|no)|log_format[[:space:]]*=[[:space:]]*(RAW|ENRICHED)|CtrlAltDelBurstAction[[:space:]]*=[[:space:]]*none|banner-message-enable[[:space:]]*=[[:space:]]*(true|false))[[:space:]]*$/)
                 print mark " " v
             else
                 print mark " [source line omitted; see reviewed change above]"
@@ -3333,6 +3341,2209 @@ The audit daemon must be restarted for the changes to take effect.
 
 $ service auditd restart' || return 1
 
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230227' 'II' 'medium' 'yes' 'attended-file' '' 'V-230227' \
+        'RHEL 8 must display the Standard Mandatory DoW Notice and Consent Banner before granting local or remote access to the system via a command line user logon.' \
+        'SV-230227r1262184_rule' 'RHEL-08-010060' 'C-32896r1261927_chk' 'F-32871r1261928_fix' \
+        'Verify RHEL 8 displays the Standard Mandatory DoW Notice and Consent Banner before granting access to the operating system via a command line user logon.
+
+Check that RHEL 8 displays a banner at the command line login screen with the following command:
+
+$ sudo cat /etc/issue
+
+If the banner is set correctly it will return the following text:
+
+“You are accessing a U.S. Government (USG) Information System (IS) that is provided for USG-authorized use only.
+
+By using this IS (which includes any device attached to this IS), you consent to the following conditions:
+
+-The USG routinely intercepts and monitors communications on this IS for purposes including, but not limited to, penetration testing, COMSEC monitoring, network operations and defense, personnel misconduct (PM), law enforcement (LE), and counterintelligence (CI) investigations.
+
+-At any time, the USG may inspect and seize data stored on this IS.
+
+-Communications using, or data stored on, this IS are not private, are subject to routine monitoring, interception, and search, and may be disclosed or used for any USG-authorized purpose.
+
+-This IS includes security measures (e.g., authentication and access controls) to protect USG interests--not for your personal benefit or privacy.
+
+-Notwithstanding the above, using this IS does not constitute consent to PM, LE or CI investigative searching or monitoring of the content of privileged communications, or work product, related to personal representation or services by attorneys, psychotherapists, or clergy, and their assistants. Such communications and work product are private and confidential. See User Agreement for details.”
+
+If the banner text does not match the Standard Mandatory DoW Notice and Consent Banner exactly, this is a finding.' \
+        'Configure RHEL 8 to display the Standard Mandatory DoW Notice and Consent Banner before granting access to the system via command line logon.
+
+Edit the "/etc/issue" file to replace the default text with the Standard Mandatory DoW Notice and Consent Banner. The DoW-required text is:
+
+"You are accessing a U.S. Government (USG) Information System (IS) that is provided for USG-authorized use only.
+
+By using this IS (which includes any device attached to this IS), you consent to the following conditions:
+
+-The USG routinely intercepts and monitors communications on this IS for purposes including, but not limited to, penetration testing, COMSEC monitoring, network operations and defense, personnel misconduct (PM), law enforcement (LE), and counterintelligence (CI) investigations.
+
+-At any time, the USG may inspect and seize data stored on this IS.
+
+-Communications using, or data stored on, this IS are not private, are subject to routine monitoring, interception, and search, and may be disclosed or used for any USG-authorized purpose.
+
+-This IS includes security measures (e.g., authentication and access controls) to protect USG interests -- not for your personal benefit or privacy.
+
+-Notwithstanding the above, using this IS does not constitute consent to PM, LE or CI investigative searching or monitoring of the content of privileged communications, or work product, related to personal representation or services by attorneys, psychotherapists, or clergy, and their assistants. Such communications and work product are private and confidential. See User Agreement for details."' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230244' 'II' 'high' 'yes' 'attended-file' '' 'V-230244' \
+        'RHEL 8 must be configured so that all network connections associated with SSH traffic terminate after becoming unresponsive.' \
+        'SV-230244r1069300_rule' 'RHEL-08-010200' 'C-32913r1069209_chk' 'F-32888r917866_fix' \
+        'Verify the SSH server automatically terminates a user session after the SSH client has become unresponsive.
+
+Check that the "ClientAliveCountMax" is set to "1" by performing the following command:
+
+$ sudo /usr/sbin/sshd -dd 2>&1 | awk '\''/filename/ {print $4}'\'' | tr -d '\''\r'\'' | tr '\''\n'\'' '\'' '\'' | xargs sudo grep -iH '\''^\s*clientalivecountmax'\''
+
+/etc/ssh/sshd_config:ClientAliveCountMax 1
+
+If "ClientAliveCountMax" do not exist, is not set to a value of "1" in "/etc/ssh/sshd_config", or is commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Note: This setting must be applied in conjunction with RHEL-08-010201 to function correctly.
+
+Configure the SSH server to terminate a user session automatically after the SSH client has become unresponsive.
+
+Modify or append the following lines in the "/etc/ssh/sshd_config" file:
+
+     ClientAliveCountMax 1
+
+For the changes to take effect, the SSH daemon must be restarted:
+
+     $ sudo systemctl restart sshd.service' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230245' 'II' 'medium' 'yes' 'attended-file' '' 'V-230245' \
+        'The RHEL 8 /var/log/messages file must have mode 0640 or less permissive.' \
+        'SV-230245r1017063_rule' 'RHEL-08-010210' 'C-32914r567481_chk' 'F-32889r567482_fix' \
+        'Verify that the "/var/log/messages" file has mode "0640" or less permissive with the following command:
+
+$ sudo stat -c "%a %n" /var/log/messages
+
+640 /var/log/messages
+
+If a value of "0640" or less permissive is not returned, this is a finding.' \
+        'Change the permissions of the file "/var/log/messages" to "0640" by running the following command:
+
+$ sudo chmod 0640 /var/log/messages' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230246' 'II' 'high' 'yes' 'attended-action' '' 'V-230246' \
+        'The RHEL 8 /var/log/messages file must be owned by root.' \
+        'SV-230246r1017064_rule' 'RHEL-08-010220' 'C-32915r567484_chk' 'F-32890r567485_fix' \
+        'Verify that the /var/log/messages file is owned by root with the following command:
+
+$ sudo stat -c "%U" /var/log/messages
+
+root
+
+If "root" is not returned as a result, this is a finding.' \
+        'Change the owner of the file /var/log/messages to root by running the following command:
+
+$ sudo chown root /var/log/messages' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230247' 'II' 'medium' 'yes' 'attended-file' '' 'V-230247' \
+        'The RHEL 8 /var/log/messages file must be group-owned by root.' \
+        'SV-230247r1017065_rule' 'RHEL-08-010230' 'C-32916r567487_chk' 'F-32891r567488_fix' \
+        'Verify the "/var/log/messages" file is group-owned by root with the following command:
+
+$ sudo stat -c "%G" /var/log/messages
+
+root
+
+If "root" is not returned as a result, this is a finding.' \
+        'Change the group of the file "/var/log/messages" to "root" by running the following command:
+
+$ sudo chgrp root /var/log/messages' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230248' 'II' 'medium' 'yes' 'attended-file' '' 'V-230248' \
+        'The RHEL 8 /var/log directory must have mode 0755 or less permissive.' \
+        'SV-230248r1069291_rule' 'RHEL-08-010240' 'C-32917r1069191_chk' 'F-32892r567491_fix' \
+        'Verify that the "/var/log" directory has a mode of "0755" or less with the following command:
+
+$ sudo stat -c "%a %n" /var/log
+
+755 /var/log
+
+If a value of "0755" or less permissive is not returned, this is a finding.' \
+        'Change the permissions of the directory "/var/log" to "0755" by running the following command:
+
+$ sudo chmod 0755 /var/log' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230250' 'II' 'medium' 'yes' 'attended-file' '' 'V-230250' \
+        'The RHEL 8 /var/log directory must be group-owned by root.' \
+        'SV-230250r1017068_rule' 'RHEL-08-010260' 'C-32919r567496_chk' 'F-32894r567497_fix' \
+        'Verify the "/var/log" directory is group-owned by root with the following command:
+
+$ sudo stat -c "%G" /var/log
+
+root
+
+If "root" is not returned as a result, this is a finding.' \
+        'Change the group of the directory "/var/log" to "root" by running the following command:
+
+$ sudo chgrp root /var/log' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230267' 'II' 'medium' 'yes' 'attended-file' '' 'V-230267' \
+        'RHEL 8 must enable kernel parameters to enforce discretionary access control on symlinks.' \
+        'SV-230267r1184249_rule' 'RHEL-08-010373' 'C-32936r1184247_chk' 'F-32911r1184248_fix' \
+        'Verify RHEL 8 is configured to enable DAC on symlinks.
+
+Check the status of the "fs.protected_symlinks" kernel parameter with the following command:
+
+$ sudo sysctl fs.protected_symlinks
+fs.protected_symlinks = 1
+
+If "fs.protected_symlinks" is not set to "1" or is missing, this is a finding.' \
+        'Configure RHEL 8 to enable DAC on symlinks with the following:
+
+Create a drop-in if it does not already exist:
+
+$ sudo vi /etc/sysctl.d/99-fs_protected_symlinks.conf
+
+Add the following to the file:
+fs.protected_symlinks = 1
+
+Reload settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230268' 'II' 'medium' 'yes' 'attended-file' '' 'V-230268' \
+        'RHEL 8 must enable kernel parameters to enforce discretionary access control on hardlinks.' \
+        'SV-230268r1184252_rule' 'RHEL-08-010374' 'C-32937r1184250_chk' 'F-32912r1184251_fix' \
+        'Verify RHEL 8 is configured to enable DAC on hardlinks.
+
+Check the status of the "fs.protected_hardlinks" kernel parameter with the following command:
+
+$ sudo sysctl fs.protected_hardlinks
+fs.protected_hardlinks = 1
+
+If "fs.protected_hardlinks" is not set to "1" or is missing, this is a finding.' \
+        'Configure RHEL 8 to enable DAC on hardlinks.
+
+Create a drop-in if it does not already exist:
+
+$ sudo vi /etc/sysctl.d/99-fs_protected_hardlinks.conf
+
+Add the following to the file:
+fs.protected_hardlinks = 1
+
+Reload settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230269' 'III' 'medium' 'yes' 'attended-file' '' 'V-230269' \
+        'RHEL 8 must restrict access to the kernel message buffer.' \
+        'SV-230269r1262201_rule' 'RHEL-08-010375' 'C-32938r1184253_chk' 'F-32913r1184254_fix' \
+        'Verify RHEL 8 is configured to restrict access to the kernel message buffer.
+
+Check the status of the "kernel.dmesg_restrict" kernel parameter with the following command:
+
+$ sudo sysctl kernel.dmesg_restrict
+kernel.dmesg_restrict = 1
+
+If "kernel.dmesg_restrict" is not set to "1" or is missing, this is a finding.' \
+        'Configure RHEL 8 to restrict access to the kernel message buffer.
+
+Create a drop-in if it does not already exist:
+
+$ sudo vi /etc/sysctl.d/99-dmesg_restrict.conf
+
+Add the following to the file:
+kernel.dmesg_restrict = 1
+
+Reload settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230270' 'III' 'medium' 'yes' 'attended-file' '' 'V-230270' \
+        'RHEL 8 must prevent kernel profiling by unprivileged users.' \
+        'SV-230270r1262202_rule' 'RHEL-08-010376' 'C-32939r1184256_chk' 'F-32914r1184257_fix' \
+        'Verify RHEL 8 is configured to prevent kernel profiling by nonprivileged users.
+
+Check the status of the "kernel.perf_event_paranoid" kernel parameter.
+
+$ sudo sysctl kernel.perf_event_paranoid
+kernel.perf_event_paranoid = 2
+
+If "kernel.perf_event_paranoid" is not set to "2" or is missing, this is a finding.' \
+        'Configure RHEL 8 to prevent kernel profiling by nonprivileged users.
+
+Create a drop-in if it does not already exist:
+
+$ sudo vi /etc/sysctl.d/99-kernel_perf_event_paranoid.conf
+
+Add the following to the file:
+kernel.perf_event_paranoid = 2
+
+Reload settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230280' 'II' 'medium' 'yes' 'attended-file' '' 'V-230280' \
+        'RHEL 8 must implement address space layout randomization (ASLR) to protect its memory from unauthorized code execution.' \
+        'SV-230280r1208745_rule' 'RHEL-08-010430' 'C-32949r1208743_chk' 'F-32924r1208744_fix' \
+        'Verify RHEL 8 implements ASLR with the following command:
+
+$ sudo sysctl kernel.randomize_va_space
+kernel.randomize_va_space = 2
+
+If "kernel.randomize_va_space" is not set to "2", this is a finding.
+
+Check that the configuration files are present to enable this kernel parameter.
+
+$ sudo grep -rs kernel.randomize_va_space /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+/etc/sysctl.d/99-kernel_randomize_va_space.conf:kernel.randomize_va_space = 2
+
+If "kernel.randomize_va_space" is not set to "2", or is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to implement virtual address space randomization.
+
+$ echo '\''kernel.randomize_va_space = 2'\'' | sudo tee /etc/sysctl.d/99-kernel_randomize_va_space.conf
+
+Remove any configurations that conflict with the above from the following locations:
+
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Issue the following command to make the changes take effect:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230281' 'III' 'medium' 'yes' 'attended-file' '' 'V-230281' \
+        'YUM must remove all software components after updated versions have been installed on RHEL 8.' \
+        'SV-230281r958936_rule' 'RHEL-08-010440' 'C-32950r567589_chk' 'F-32925r567590_fix' \
+        'Verify the operating system removes all software components after updated versions have been installed.
+
+Check if YUM is configured to remove unneeded packages with the following command:
+
+$ sudo grep -i clean_requirements_on_remove /etc/dnf/dnf.conf
+
+clean_requirements_on_remove=True
+
+If "clean_requirements_on_remove" is not set to either "1", "True", or "yes", commented out, or is missing from "/etc/dnf/dnf.conf", this is a finding.' \
+        'Configure the operating system to remove all software components after updated versions have been installed.
+
+Set the "clean_requirements_on_remove" option to "True" in the "/etc/dnf/dnf.conf" file:
+
+clean_requirements_on_remove=True' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230286' 'II' 'high' 'yes' 'attended-file' '' 'V-230286' \
+        'The RHEL 8 SSH public host key files must have mode 0644 or less permissive.' \
+        'SV-230286r1017097_rule' 'RHEL-08-010480' 'C-32955r567604_chk' 'F-32930r567605_fix' \
+        'Verify the SSH public host key files have mode "0644" or less permissive with the following command:
+
+$ sudo ls -l /etc/ssh/*.pub
+
+-rw-r--r-- 1 root root 618 Nov 28 06:43 ssh_host_dsa_key.pub
+-rw-r--r-- 1 root root 347 Nov 28 06:43 ssh_host_key.pub
+-rw-r--r-- 1 root root 238 Nov 28 06:43 ssh_host_rsa_key.pub
+
+If any key.pub file has a mode more permissive than "0644", this is a finding.
+
+Note: SSH public key files may be found in other directories on the system depending on the installation.' \
+        'Change the mode of public host key files under "/etc/ssh" to "0644" with the following command:
+
+$ sudo chmod 0644 /etc/ssh/*key.pub
+
+The SSH daemon must be restarted for the changes to take effect. To restart the SSH daemon, run the following command:
+
+$ sudo systemctl restart sshd.service' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230288' 'II' 'high' 'yes' 'attended-file' '' 'V-230288' \
+        'The RHEL 8 SSH daemon must perform strict mode checking of home directory configuration files.' \
+        'SV-230288r1069301_rule' 'RHEL-08-010500' 'C-32957r1069211_chk' 'F-32932r567611_fix' \
+        'Verify the SSH daemon performs strict mode checking of home directory configuration files with the following command:
+
+$ sudo /usr/sbin/sshd -dd 2>&1 | awk '\''/filename/ {print $4}'\'' | tr -d '\''\r'\'' | tr '\''\n'\'' '\'' '\'' | xargs sudo grep -iH '\''^\s*strictmodes'\''
+
+/etc/ssh/sshd_config:StrictModes yes
+
+If "StrictModes" is set to "no", is missing, or the returned line is commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure SSH to perform strict mode checking of home directory configuration files. Uncomment the "StrictModes" keyword in "/etc/ssh/sshd_config" and set the value to "yes":
+
+StrictModes yes
+
+The SSH daemon must be restarted for the changes to take effect. To restart the SSH daemon, run the following command:
+
+$ sudo systemctl restart sshd.service' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230290' 'II' 'high' 'yes' 'attended-file' '' 'V-230290' \
+        'The RHEL 8 SSH daemon must not allow authentication using known host’s authentication.' \
+        'SV-230290r1069302_rule' 'RHEL-08-010520' 'C-32959r1069213_chk' 'F-32934r567617_fix' \
+        'Verify the SSH daemon does not allow authentication using known host’s authentication with the following command:
+
+$ sudo /usr/sbin/sshd -dd 2>&1 | awk '\''/filename/ {print $4}'\'' | tr -d '\''\r'\'' | tr '\''\n'\'' '\'' '\'' | xargs sudo grep -iH '\''^\s*ignoreuserknownhosts'\''
+
+/etc/ssh/sshd_config:IgnoreUserKnownHosts yes
+
+If the value is returned as "no", the returned line is commented out, or no output is returned, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure the SSH daemon to not allow authentication using known host’s authentication.
+
+Add the following line in "/etc/ssh/sshd_config", or uncomment the line and set the value to "yes":
+
+IgnoreUserKnownHosts yes
+
+The SSH daemon must be restarted for the changes to take effect. To restart the SSH daemon, run the following command:
+
+$ sudo systemctl restart sshd.service' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230321' 'II' 'high' 'yes' 'attended-action' '' 'V-230321' \
+        'All RHEL 8 local interactive user home directories must have mode 0750 or less permissive.' \
+        'SV-230321r1017132_rule' 'RHEL-08-010730' 'C-32990r567709_chk' 'F-32965r567710_fix' \
+        'Verify the assigned home directory of all local interactive users has a mode of "0750" or less permissive with the following command:
+
+Note: This may miss interactive users that have been assigned a privileged User Identifier (UID). Evidence of interactive use may be obtained from a number of log files containing system logon information.
+
+$ sudo ls -ld $(awk -F: '\''($3>=1000)&&($7 !~ /nologin/){print $6}'\'' /etc/passwd)
+
+drwxr-x--- 2 smithj admin 4096 Jun 5 12:41 smithj
+
+If home directories referenced in "/etc/passwd" do not have a mode of "0750" or less permissive, this is a finding.' \
+        'Change the mode of interactive user’s home directories to "0750". To change the mode of a local interactive user’s home directory, use the following command:
+
+Note: The example will be for the user "smithj".
+
+$ sudo chmod 0750 /home/smithj' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230324' 'II' 'high' 'yes' 'attended-file' '' 'V-230324' \
+        'All RHEL 8 local interactive user accounts must be assigned a home directory upon creation.' \
+        'SV-230324r1017135_rule' 'RHEL-08-010760' 'C-32993r567718_chk' 'F-32968r567719_fix' \
+        'Verify all local interactive users on RHEL 8 are assigned a home directory upon creation with the following command:
+
+$ sudo grep -i create_home /etc/login.defs
+
+CREATE_HOME yes
+
+If the value for "CREATE_HOME" parameter is not set to "yes", the line is missing, or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to assign home directories to all new local interactive users by setting the "CREATE_HOME" parameter in "/etc/login.defs" to "yes" as follows.
+
+CREATE_HOME yes' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230325' 'II' 'high' 'yes' 'attended-action' '' 'V-230325' \
+        'All RHEL 8 local initialization files must have mode 0740 or less permissive.' \
+        'SV-230325r1017136_rule' 'RHEL-08-010770' 'C-32994r917877_chk' 'F-32969r917878_fix' \
+        'Verify that all local initialization files have a mode of "0740" or less permissive with the following command:
+
+Note: The example will be for the "smithj" user, who has a home directory of "/home/smithj".
+
+     $ sudo ls -al /home/smithj/.[^.]* | more
+
+     -rw-------. 1 smithj users 2984 Apr 27 19:02 .bash_history
+     -rw-r--r--. 1 smithj users   18 Aug 21  2019 .bash_logout
+     -rw-r--r--. 1 smithj users  193 Aug 21  2019 .bash_profile
+
+If any local initialization files have a mode more permissive than "0740", this is a finding.' \
+        'Set the mode of the local initialization files to "0740" with the following command:
+
+Note: The example will be for the smithj user, who has a home directory of "/home/smithj".
+
+     $ sudo chmod 0740 /home/smithj/.<INIT_FILE>' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230330' 'II' 'high' 'yes' 'attended-file' '' 'V-230330' \
+        'RHEL 8 must not allow users to override SSH environment variables.' \
+        'SV-230330r1069305_rule' 'RHEL-08-010830' 'C-32999r1069219_chk' 'F-32974r567737_fix' \
+        'Verify that unattended or automatic logon via ssh is disabled with the following command:
+
+$ sudo /usr/sbin/sshd -dd 2>&1 | awk '\''/filename/ {print $4}'\'' | tr -d '\''\r'\'' | tr '\''\n'\'' '\'' '\'' | xargs sudo grep -iH '\''^\s*permituserenvironment'\''
+
+/etc/ssh/sshd_config:PermitUserEnvironment no
+
+If "PermitUserEnvironment" is set to "yes", is missing completely, or is commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to allow the SSH daemon to not allow unattended or automatic logon to the system.
+
+Add or edit the following line in the "/etc/ssh/sshd_config" file:
+
+PermitUserEnvironment no
+
+The SSH daemon must be restarted for the changes to take effect. To restart the SSH daemon, run the following command:
+
+$ sudo systemctl restart sshd.service' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230347' 'II' 'medium' 'yes' 'attended-file' '' 'V-230347' \
+        'RHEL 8 must enable a user session lock until that user re-establishes access using established identification and authentication procedures for graphical user sessions.' \
+        'SV-230347r1017160_rule' 'RHEL-08-020030' 'C-33016r567787_chk' 'F-32991r567788_fix' \
+        'Verify the operating system enables a user'\''s session lock until that user re-establishes access using established identification and authentication procedures with the following command:
+
+$ sudo gsettings get org.gnome.desktop.screensaver lock-enabled
+
+true
+
+If the setting is "false", this is a finding.
+
+Note: This requirement assumes the use of the RHEL 8 default graphical user interface, Gnome Shell. If the system does not have any graphical user interface installed, this requirement is Not Applicable.' \
+        'Configure the operating system to enable a user'\''s session lock until that user re-establishes access using established identification and authentication procedures.
+
+Create a database to contain the system-wide screensaver settings (if it does not already exist) with the following example:
+
+$ sudo vi /etc/dconf/db/local.d/00-screensaver
+
+Edit the "[org/gnome/desktop/screensaver]" section of the database file and add or update the following lines:
+
+# Set this to true to lock the screen when the screensaver activates
+lock-enabled=true
+
+Update the system databases:
+
+$ sudo dconf update' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230357' 'II' 'high' 'yes' 'attended-file' '' 'V-230357' \
+        'RHEL 8 must enforce password complexity by requiring that at least one uppercase character be used.' \
+        'SV-230357r1017169_rule' 'RHEL-08-020110' 'C-33026r833312_chk' 'F-33001r858770_fix' \
+        'Verify the value for "ucredit" with the following command:
+
+$ sudo grep -r ucredit /etc/security/pwquality.conf*
+
+/etc/security/pwquality.conf:ucredit = -1
+
+If the value of "ucredit" is a positive number or is commented out, this is a finding.
+If conflicting results are returned, this is a finding.' \
+        'Configure the operating system to enforce password complexity by requiring that at least one uppercase character be used by setting the "ucredit" option.
+
+Add the following line to /etc/security/pwquality.conf (or modify the line to have the required value):
+
+ucredit = -1
+
+Remove any configurations that conflict with the above value.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230358' 'II' 'high' 'yes' 'attended-file' '' 'V-230358' \
+        'RHEL 8 must enforce password complexity by requiring that at least one lower-case character be used.' \
+        'SV-230358r1017170_rule' 'RHEL-08-020120' 'C-33027r833314_chk' 'F-33002r858772_fix' \
+        'Verify the value for "lcredit" with the following command:
+
+$ sudo grep -r lcredit /etc/security/pwquality.conf*
+
+/etc/security/pwquality.conf:lcredit = -1
+
+If the value of "lcredit" is a positive number or is commented out, this is a finding.
+If conflicting results are returned, this is a finding.' \
+        'Configure the operating system to enforce password complexity by requiring that at least one lower-case character be used by setting the "lcredit" option.
+
+Add the following line to /etc/security/pwquality.conf (or modify the line to have the required value):
+
+lcredit = -1
+
+Remove any configurations that conflict with the above value.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230359' 'II' 'high' 'yes' 'attended-file' '' 'V-230359' \
+        'RHEL 8 must enforce password complexity by requiring that at least one numeric character be used.' \
+        'SV-230359r1017171_rule' 'RHEL-08-020130' 'C-33028r833316_chk' 'F-33003r858774_fix' \
+        'Verify the value for "dcredit" with the following command:
+
+$ sudo grep -r dcredit /etc/security/pwquality.conf*
+
+/etc/security/pwquality.conf:dcredit = -1
+
+If the value of "dcredit" is a positive number or is commented out, this is a finding.
+If conflicting results are returned, this is a finding.' \
+        'Configure the operating system to enforce password complexity by requiring that at least one numeric character be used by setting the "dcredit" option.
+
+Add the following line to /etc/security/pwquality.conf (or modify the line to have the required value):
+
+dcredit = -1
+
+Remove any configurations that conflict with the above value.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230360' 'II' 'high' 'yes' 'attended-file' '' 'V-230360' \
+        'RHEL 8 must require the maximum number of repeating characters of the same character class be limited to four when passwords are changed.' \
+        'SV-230360r1017172_rule' 'RHEL-08-020140' 'C-33029r833318_chk' 'F-33004r858776_fix' \
+        'Check for the value of the "maxclassrepeat" option with the following command:
+
+$ sudo grep -r maxclassrepeat /etc/security/pwquality.conf*
+
+/etc/security/pwquality.conf:maxclassrepeat = 4
+
+If the value of "maxclassrepeat" is set to "0", more than "4" or is commented out, this is a finding.
+If conflicting results are returned, this is a finding.' \
+        'Configure the operating system to require the change of the number of repeating characters of the same character class when passwords are changed by setting the "maxclassrepeat" option.
+
+Add the following line to "/etc/security/pwquality.conf" conf (or modify the line to have the required value):
+
+maxclassrepeat = 4
+
+Remove any configurations that conflict with the above value.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230361' 'II' 'high' 'yes' 'attended-file' '' 'V-230361' \
+        'RHEL 8 must require the maximum number of repeating characters be limited to three when passwords are changed.' \
+        'SV-230361r1017173_rule' 'RHEL-08-020150' 'C-33030r833320_chk' 'F-33005r858778_fix' \
+        'Check for the value of the "maxrepeat" option with the following command:
+
+$ sudo grep -r maxrepeat /etc/security/pwquality.conf*
+
+/etc/security/pwquality.conf:maxrepeat = 3
+
+If the value of "maxrepeat" is set to more than "3" or is commented out, this is a finding.
+If conflicting results are returned, this is a finding.' \
+        'Configure the operating system to require the change of the number of repeating consecutive characters when passwords are changed by setting the "maxrepeat" option.
+
+Add the following line to "/etc/security/pwquality.conf conf" (or modify the line to have the required value):
+
+maxrepeat = 3
+
+Remove any configurations that conflict with the above value.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230362' 'II' 'high' 'yes' 'attended-file' '' 'V-230362' \
+        'RHEL 8 must require the change of at least four character classes when passwords are changed.' \
+        'SV-230362r1017174_rule' 'RHEL-08-020160' 'C-33031r833322_chk' 'F-33006r858780_fix' \
+        'Verify the value of the "minclass" option with the following command:
+
+$ sudo grep -r minclass /etc/security/pwquality.conf*
+
+/etc/security/pwquality.conf:minclass = 4
+
+If the value of "minclass" is set to less than "4" or is commented out, this is a finding.
+If conflicting results are returned, this is a finding.' \
+        'Configure the operating system to require the change of at least four character classes when passwords are changed by setting the "minclass" option.
+
+Add the following line to "/etc/security/pwquality.conf conf" (or modify the line to have the required value):
+
+minclass = 4
+
+Remove any configurations that conflict with the above value.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230363' 'II' 'high' 'yes' 'attended-file' '' 'V-230363' \
+        'RHEL 8 must require the change of at least 8 characters when passwords are changed.' \
+        'SV-230363r1017175_rule' 'RHEL-08-020170' 'C-33032r833324_chk' 'F-33007r858782_fix' \
+        'Verify the value of the "difok" option with the following command:
+
+$ sudo grep -r difok /etc/security/pwquality.conf*
+
+/etc/security/pwquality.conf:difok = 8
+
+If the value of "difok" is set to less than "8" or is commented out, this is a finding.
+If conflicting results are returned, this is a finding.' \
+        'Configure the operating system to require the change of at least eight of the total number of characters when passwords are changed by setting the "difok" option.
+
+Add the following line to "/etc/security/pwquality.conf" (or modify the line to have the required value):
+
+difok = 8
+
+Remove any configurations that conflict with the above value.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230365' 'II' 'high' 'yes' 'attended-file' '' 'V-230365' \
+        'RHEL 8 passwords for new users or password changes must have a 24 hours/1 day minimum password lifetime restriction in /etc/login.defs.' \
+        'SV-230365r1017177_rule' 'RHEL-08-020190' 'C-33034r567841_chk' 'F-33009r567842_fix' \
+        'Verify the operating system enforces 24 hours/1 day as the minimum password lifetime for new user accounts.
+
+Check for the value of "PASS_MIN_DAYS" in "/etc/login.defs" with the following command:
+
+$ sudo grep -i pass_min_days /etc/login.defs
+PASS_MIN_DAYS 1
+
+If the "PASS_MIN_DAYS" parameter value is not "1" or greater, or is commented out, this is a finding.' \
+        'Configure the operating system to enforce 24 hours/1 day as the minimum password lifetime.
+
+Add the following line in "/etc/login.defs" (or modify the line to have the required value):
+
+PASS_MIN_DAYS 1' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230366' 'II' 'high' 'yes' 'attended-file' '' 'V-230366' \
+        'RHEL 8 user account passwords must have a 180-day maximum password lifetime restriction.' \
+        'SV-230366r1262169_rule' 'RHEL-08-020200' 'C-33035r1261892_chk' 'F-33010r1261893_fix' \
+        'Verify that RHEL 8 enforces a 180-day maximum password lifetime for new user accounts by running the following command:
+
+$ sudo grep -i pass_max_days /etc/login.defs
+PASS_MAX_DAYS 180
+
+If the "PASS_MAX_DAYS" parameter value is greater than "180", or commented out, this is a finding.' \
+        'Configure RHEL 8 to enforce a 180-day maximum password lifetime.
+
+Add, or modify the following line in the "/etc/login.defs" file:
+
+PASS_MAX_DAYS 180' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230369' 'II' 'high' 'yes' 'attended-file' '' 'V-230369' \
+        'RHEL 8 passwords must have a minimum of 15 characters.' \
+        'SV-230369r1262207_rule' 'RHEL-08-020230' 'C-33038r833326_chk' 'F-33013r858784_fix' \
+        'Verify the operating system enforces a minimum 15-character password length. The "minlen" option sets the minimum number of characters in a new password.
+
+Check for the value of the "minlen" option with the following command:
+
+$ sudo grep -r minlen /etc/security/pwquality.conf*
+
+/etc/security/pwquality.conf:minlen = 15
+
+If the command does not return a "minlen" value of 15 or greater, this is a finding.
+If conflicting results are returned, this is a finding.' \
+        'Configure operating system to enforce a minimum 15-character password length.
+
+Add the following line to "/etc/security/pwquality.conf" (or modify the line to have the required value):
+
+minlen = 15
+
+Remove any configurations that conflict with the above value.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230375' 'II' 'high' 'yes' 'attended-file' '' 'V-230375' \
+        'All RHEL 8 passwords must contain at least one special character.' \
+        'SV-230375r1017187_rule' 'RHEL-08-020280' 'C-33044r833328_chk' 'F-33019r858786_fix' \
+        'Verify the value for "ocredit" with the following command:
+
+$ sudo grep -r ocredit /etc/security/pwquality.conf*
+
+/etc/security/pwquality.conf:ocredit = -1
+
+If the value of "ocredit" is a positive number or is commented out, this is a finding.
+If conflicting results are returned, this is a finding.' \
+        'Configure the operating system to enforce password complexity by requiring that at least one special character be used by setting the "ocredit" option.
+
+Add the following line to /etc/security/pwquality.conf (or modify the line to have the required value):
+
+ocredit = -1
+
+Remove any configurations that conflict with the above value.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230377' 'II' 'high' 'yes' 'attended-file' '' 'V-230377' \
+        'RHEL 8 must prevent the use of dictionary words for passwords.' \
+        'SV-230377r1017188_rule' 'RHEL-08-020300' 'C-33046r833330_chk' 'F-33021r858788_fix' \
+        'Verify RHEL 8 prevents the use of dictionary words for passwords.
+
+Determine if the field "dictcheck" is set with the following command:
+
+$ sudo grep -r dictcheck /etc/security/pwquality.conf*
+
+/etc/security/pwquality.conf:dictcheck=1
+
+If the "dictcheck" parameter is not set to "1", or is commented out, this is a finding.
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to prevent the use of dictionary words for passwords.
+
+Add or update the following line in the "/etc/security/pwquality.conf" file or a configuration file in the /etc/pwquality.conf.d/ directory to contain the "dictcheck" parameter:
+
+dictcheck=1
+
+Remove any configurations that conflict with the above value.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230378' 'II' 'high' 'yes' 'attended-file' '' 'V-230378' \
+        'RHEL 8 must enforce a delay of at least four seconds between logon prompts following a failed logon attempt.' \
+        'SV-230378r1262211_rule' 'RHEL-08-020310' 'C-33047r567880_chk' 'F-33022r567881_fix' \
+        'Verify the operating system enforces a delay of at least four seconds between console logon prompts following a failed logon attempt with the following command:
+
+$ sudo grep -i fail_delay /etc/login.defs
+
+FAIL_DELAY 4
+
+If the value of "FAIL_DELAY" is not set to "4" or greater, or the line is commented out, this is a finding.' \
+        'Configure the operating system to enforce a delay of at least four seconds between logon prompts following a failed console logon attempt.
+
+Modify the "/etc/login.defs" file to set the "FAIL_DELAY" parameter to "4" or greater:
+
+FAIL_DELAY 4' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230382' 'II' 'high' 'yes' 'attended-file' '' 'V-230382' \
+        'RHEL 8 must display the date and time of the last successful account logon upon an SSH logon.' \
+        'SV-230382r1069309_rule' 'RHEL-08-020350' 'C-33051r1069227_chk' 'F-33026r567893_fix' \
+        'Verify SSH provides users with feedback on when account accesses last occurred with the following command:
+
+$ sudo /usr/sbin/sshd -dd 2>&1 | awk '\''/filename/ {print $4}'\'' | tr -d '\''\r'\'' | tr '\''\n'\'' '\'' '\'' | xargs sudo grep -iH '\''^\s*printlastlog'\''
+
+/etc/ssh/sshd_config:PrintLastLog yes
+
+If the "PrintLastLog" keyword is set to "no", is missing, or is commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure SSH to provide users with feedback on when account accesses last occurred by setting the required configuration options in "/etc/pam.d/sshd" or in the "sshd_config" file used by the system ("/etc/ssh/sshd_config" will be used in the example) (this file may be named differently or be in a different location if using a version of SSH that is provided by a third-party vendor).
+
+Modify the "PrintLastLog" line in "/etc/ssh/sshd_config" to match the following:
+
+PrintLastLog yes
+
+The SSH service must be restarted for changes to "sshd_config" to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230383' 'II' 'high' 'yes' 'attended-file' '' 'V-230383' \
+        'RHEL 8 must define default permissions for all authenticated users in such a way that the user can only read and modify their own files.' \
+        'SV-230383r1017192_rule' 'RHEL-08-020351' 'C-33052r567895_chk' 'F-33027r567896_fix' \
+        'Verify the operating system defines default permissions for all authenticated users in such a way that the user can only read and modify their own files.
+
+Check for the value of the "UMASK" parameter in "/etc/login.defs" file with the following command:
+
+Note: If the value of the "UMASK" parameter is set to "000" in "/etc/login.defs" file, the Severity is raised to a CAT I.
+
+# grep -i umask /etc/login.defs
+
+UMASK 077
+
+If the value for the "UMASK" parameter is not "077", or the "UMASK" parameter is missing or is commented out, this is a finding.' \
+        'Configure the operating system to define default permissions for all authenticated users in such a way that the user can only read and modify their own files.
+
+Add or edit the line for the "UMASK" parameter in "/etc/login.defs" file to "077":
+
+UMASK 077' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230393' 'II' 'medium' 'yes' 'attended-file' '' 'V-230393' \
+        'The RHEL 8 audit system must audit local events.' \
+        'SV-230393r1017200_rule' 'RHEL-08-030061' 'C-33062r567925_chk' 'F-33037r567926_fix' \
+        'Verify the RHEL 8 Audit Daemon is configured to include local events, with the following command:
+
+$ sudo grep local_events /etc/audit/auditd.conf
+
+local_events = yes
+
+If the value of the "local_events" option is not set to "yes", or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to audit local events on the system.
+
+Add or update the following line in "/etc/audit/auditd.conf" file:
+
+local_events = yes' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230395' 'III' 'medium' 'yes' 'attended-file' '' 'V-230395' \
+        'RHEL 8 must resolve audit information before writing to disk.' \
+        'SV-230395r1017201_rule' 'RHEL-08-030063' 'C-33064r567931_chk' 'F-33039r567932_fix' \
+        'Verify the RHEL 8 Audit Daemon is configured to resolve audit information before writing to disk, with the following command:
+
+$ sudo grep "log_format" /etc/audit/auditd.conf
+
+log_format = ENRICHED
+
+If the "log_format" option is not "ENRICHED", or the line is commented out, this is a finding.' \
+        'Edit the /etc/audit/auditd.conf file and add or update the "log_format" option:
+
+log_format = ENRICHED
+
+The audit daemon must be restarted for changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230397' 'II' 'high' 'yes' 'attended-action' '' 'V-230397' \
+        'RHEL 8 audit logs must be owned by root to prevent unauthorized read access.' \
+        'SV-230397r1017203_rule' 'RHEL-08-030080' 'C-33066r567937_chk' 'F-33041r567938_fix' \
+        'Verify the audit logs are owned by "root". First, determine where the audit logs are stored with the following command:
+
+$ sudo grep -iw log_file /etc/audit/auditd.conf
+
+log_file = /var/log/audit/audit.log
+
+Using the location of the audit log file, determine if the audit log is owned by "root" using the following command:
+
+$ sudo ls -al /var/log/audit/audit.log
+
+rw------- 2 root root 23 Jun 11 11:56 /var/log/audit/audit.log
+
+If the audit log is not owned by "root", this is a finding.' \
+        'Configure the audit log to be protected from unauthorized read access, by setting the correct owner as "root" with the following command:
+
+$ sudo chown root [audit_log_file]
+
+Replace "[audit_log_file]" to the correct audit log path, by default this location is "/var/log/audit/audit.log".' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230399' 'II' 'high' 'yes' 'attended-action' '' 'V-230399' \
+        'RHEL 8 audit log directory must be owned by root to prevent unauthorized read access.' \
+        'SV-230399r1017205_rule' 'RHEL-08-030100' 'C-33068r567943_chk' 'F-33043r567944_fix' \
+        'Verify the audit log directory is owned by "root" to prevent unauthorized read access.
+
+Determine where the audit logs are stored with the following command:
+
+$ sudo grep -iw log_file /etc/audit/auditd.conf
+
+log_file = /var/log/audit/audit.log
+
+Determine the owner of the audit log directory by using the output of the above command (ex: "/var/log/audit/"). Run the following command with the correct audit log directory path:
+
+$ sudo ls -ld /var/log/audit
+
+drw------- 2 root root 23 Jun 11 11:56 /var/log/audit
+
+If the audit log directory is not owned by "root", this is a finding.' \
+        'Configure the audit log to be protected from unauthorized read access, by setting the correct owner as "root" with the following command:
+
+$ sudo chown root [audit_log_directory]
+
+Replace "[audit_log_directory]" with the correct audit log directory path, by default this location is usually "/var/log/audit".' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230404' 'II' 'medium' 'yes' 'attended-file' '' 'V-230404' \
+        'RHEL 8 must generate audit records for all account creations, modifications, disabling, and termination events that affect /etc/shadow.' \
+        'SV-230404r1017210_rule' 'RHEL-08-030130' 'C-33073r567958_chk' 'F-33048r567959_fix' \
+        'Verify RHEL 8 generates audit records for all account creations, modifications, disabling, and termination events that affect "/etc/shadow".
+
+Check the auditing rules in "/etc/audit/audit.rules" with the following command:
+
+$ sudo grep /etc/shadow /etc/audit/audit.rules
+
+-w /etc/shadow -p wa -k identity
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to generate audit records for all account creations, modifications, disabling, and termination events that affect "/etc/shadow".
+
+Add or update the following file system rule to "/etc/audit/rules.d/audit.rules":
+
+-w /etc/shadow -p wa -k identity
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230405' 'II' 'medium' 'yes' 'attended-file' '' 'V-230405' \
+        'RHEL 8 must generate audit records for all account creations, modifications, disabling, and termination events that affect /etc/security/opasswd.' \
+        'SV-230405r1017211_rule' 'RHEL-08-030140' 'C-33074r567961_chk' 'F-33049r567962_fix' \
+        'Verify RHEL 8 generates audit records for all account creations, modifications, disabling, and termination events that affect "/etc/security/opasswd".
+
+Check the auditing rules in "/etc/audit/audit.rules" with the following command:
+
+$ sudo grep /etc/security/opasswd /etc/audit/audit.rules
+
+-w /etc/security/opasswd -p wa -k identity
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to generate audit records for all account creations, modifications, disabling, and termination events that affect "/etc/security/opasswd".
+
+Add or update the following file system rule to "/etc/audit/rules.d/audit.rules":
+
+-w /etc/security/opasswd -p wa -k identity
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230406' 'II' 'medium' 'yes' 'attended-file' '' 'V-230406' \
+        'RHEL 8 must generate audit records for all account creations, modifications, disabling, and termination events that affect /etc/passwd.' \
+        'SV-230406r1017212_rule' 'RHEL-08-030150' 'C-33075r567964_chk' 'F-33050r567965_fix' \
+        'Verify RHEL 8 generates audit records for all account creations, modifications, disabling, and termination events that affect "/etc/passwd".
+
+Check the auditing rules in "/etc/audit/audit.rules" with the following command:
+
+$ sudo grep /etc/passwd /etc/audit/audit.rules
+
+-w /etc/passwd -p wa -k identity
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to generate audit records for all account creations, modifications, disabling, and termination events that affect "/etc/passwd".
+
+Add or update the following file system rule to "/etc/audit/rules.d/audit.rules":
+
+-w /etc/passwd -p wa -k identity
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230407' 'II' 'medium' 'yes' 'attended-file' '' 'V-230407' \
+        'RHEL 8 must generate audit records for all account creations, modifications, disabling, and termination events that affect /etc/gshadow.' \
+        'SV-230407r1017213_rule' 'RHEL-08-030160' 'C-33076r567967_chk' 'F-33051r567968_fix' \
+        'Verify RHEL 8 generates audit records for all account creations, modifications, disabling, and termination events that affect "/etc/gshadow".
+
+Check the auditing rules in "/etc/audit/audit.rules" with the following command:
+
+$ sudo grep /etc/gshadow /etc/audit/audit.rules
+
+-w /etc/gshadow -p wa -k identity
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to generate audit records for all account creations, modifications, disabling, and termination events that affect "/etc/gshadow".
+
+Add or update the following file system rule to "/etc/audit/rules.d/audit.rules":
+
+-w /etc/gshadow -p wa -k identity
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230408' 'II' 'medium' 'yes' 'attended-file' '' 'V-230408' \
+        'RHEL 8 must generate audit records for all account creations, modifications, disabling, and termination events that affect /etc/group.' \
+        'SV-230408r1017214_rule' 'RHEL-08-030170' 'C-33077r567970_chk' 'F-33052r567971_fix' \
+        'Verify RHEL 8 generates audit records for all account creations, modifications, disabling, and termination events that affect "/etc/group".
+
+Check the auditing rules in "/etc/audit/audit.rules" with the following command:
+
+$ sudo grep /etc/group /etc/audit/audit.rules
+
+-w /etc/group -p wa -k identity
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to generate audit records for all account creations, modifications, disabling, and termination events that affect "/etc/group".
+
+Add or update the following file system rule to "/etc/audit/rules.d/audit.rules":
+
+-w /etc/group -p wa -k identity
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230409' 'II' 'medium' 'yes' 'attended-file' '' 'V-230409' \
+        'RHEL 8 must generate audit records for all account creations, modifications, disabling, and termination events that affect /etc/sudoers.' \
+        'SV-230409r1017215_rule' 'RHEL-08-030171' 'C-33078r567973_chk' 'F-33053r567974_fix' \
+        'Verify RHEL 8 generates audit records for all account creations, modifications, disabling, and termination events that affect "/etc/sudoers".
+
+Check the auditing rules in "/etc/audit/audit.rules" with the following command:
+
+$ sudo grep /etc/sudoers /etc/audit/audit.rules
+
+-w /etc/sudoers -p wa -k identity
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to generate audit records for all account creations, modifications, disabling, and termination events that affect "/etc/sudoers".
+
+Add or update the following file system rule to "/etc/audit/rules.d/audit.rules":
+
+-w /etc/sudoers -p wa -k identity
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230410' 'II' 'medium' 'yes' 'attended-file' '' 'V-230410' \
+        'RHEL 8 must generate audit records for all account creations, modifications, disabling, and termination events that affect /etc/sudoers.d/.' \
+        'SV-230410r1017216_rule' 'RHEL-08-030172' 'C-33079r567976_chk' 'F-33054r567977_fix' \
+        'Verify RHEL 8 generates audit records for all account creations, modifications, disabling, and termination events that affect "/etc/sudoers.d/".
+
+Check the auditing rules in "/etc/audit/audit.rules" with the following command:
+
+$ sudo grep /etc/sudoers.d/ /etc/audit/audit.rules
+
+-w /etc/sudoers.d/ -p wa -k identity
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to generate audit records for all account creations, modifications, disabling, and termination events that affect "/etc/sudoers.d/".
+
+Add or update the following file system rule to "/etc/audit/rules.d/audit.rules":
+
+-w /etc/sudoers.d/ -p wa -k identity
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230412' 'II' 'medium' 'yes' 'attended-file' '' 'V-230412' \
+        'Successful/unsuccessful uses of the su command in RHEL 8 must generate an audit record.' \
+        'SV-230412r1017218_rule' 'RHEL-08-030190' 'C-33081r567982_chk' 'F-33056r567983_fix' \
+        'Verify RHEL 8 generates audit records when successful/unsuccessful attempts to use the "su" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w /usr/bin/su /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/su -F perm=x -F auid>=1000 -F auid!=unset -k privileged-priv_change
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to generate audit records when successful/unsuccessful attempts to use the "su" command occur by adding or updating the following rule in "/etc/audit/rules.d/audit.rules":
+
+-a always,exit -F path=/usr/bin/su -F perm=x -F auid>=1000 -F auid!=unset -k privileged-priv_change
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230418' 'II' 'medium' 'yes' 'attended-file' '' 'V-230418' \
+        'Successful/unsuccessful uses of the chage command in RHEL 8 must generate an audit record.' \
+        'SV-230418r1017220_rule' 'RHEL-08-030250' 'C-33087r568000_chk' 'F-33062r568001_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of the "chage" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w chage /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/chage -F perm=x -F auid>=1000 -F auid!=unset -k privileged-chage
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "chage" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/chage -F perm=x -F auid>=1000 -F auid!=unset -k privileged-chage
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230419' 'II' 'medium' 'yes' 'attended-file' '' 'V-230419' \
+        'Successful/unsuccessful uses of the chcon command in RHEL 8 must generate an audit record.' \
+        'SV-230419r1017221_rule' 'RHEL-08-030260' 'C-33088r568003_chk' 'F-33063r568004_fix' \
+        'Verify RHEL 8 generates an audit record when successful/unsuccessful attempts to use the "chcon" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w chcon /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/chcon -F perm=x -F auid>=1000 -F auid!=unset -k perm_mod
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful use of the "chcon" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/chcon -F perm=x -F auid>=1000 -F auid!=unset -k perm_mod
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230421' 'II' 'medium' 'yes' 'attended-file' '' 'V-230421' \
+        'Successful/unsuccessful uses of the ssh-agent in RHEL 8 must generate an audit record.' \
+        'SV-230421r1017222_rule' 'RHEL-08-030280' 'C-33090r568009_chk' 'F-33065r568010_fix' \
+        'Verify RHEL 8 generates an audit record when successful/unsuccessful attempts to use the "ssh-agent" by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep ssh-agent /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/ssh-agent -F perm=x -F auid>=1000 -F auid!=unset -k privileged-ssh
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful use of the "ssh-agent" by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/ssh-agent -F perm=x -F auid>=1000 -F auid!=unset -k privileged-ssh
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230422' 'II' 'medium' 'yes' 'attended-file' '' 'V-230422' \
+        'Successful/unsuccessful uses of the passwd command in RHEL 8 must generate an audit record.' \
+        'SV-230422r1017223_rule' 'RHEL-08-030290' 'C-33091r568012_chk' 'F-33066r568013_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of the "passwd" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w passwd /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/passwd -F perm=x -F auid>=1000 -F auid!=unset -k privileged-passwd
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "passwd" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/passwd -F perm=x -F auid>=1000 -F auid!=unset -k privileged-passwd
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230423' 'II' 'medium' 'yes' 'attended-file' '' 'V-230423' \
+        'Successful/unsuccessful uses of the mount command in RHEL 8 must generate an audit record.' \
+        'SV-230423r1017224_rule' 'RHEL-08-030300' 'C-33092r568015_chk' 'F-33067r568016_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of the "mount" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w /usr/bin/mount /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/mount -F perm=x -F auid>=1000 -F auid!=unset -k privileged-mount
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful use of the "mount" command by adding or updating the following rules in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/mount -F perm=x -F auid>=1000 -F auid!=unset -k privileged-mount
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230424' 'II' 'medium' 'yes' 'attended-file' '' 'V-230424' \
+        'Successful/unsuccessful uses of the umount command in RHEL 8 must generate an audit record.' \
+        'SV-230424r1017225_rule' 'RHEL-08-030301' 'C-33093r568018_chk' 'F-33068r568019_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of the "umount" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w /usr/bin/umount /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/umount -F perm=x -F auid>=1000 -F auid!=unset -k privileged-mount
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful use of the "umount" command by adding or updating the following rules in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/umount -F perm=x -F auid>=1000 -F auid!=unset -k privileged-mount
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230426' 'II' 'medium' 'yes' 'attended-file' '' 'V-230426' \
+        'Successful/unsuccessful uses of the unix_update in RHEL 8 must generate an audit record.' \
+        'SV-230426r1017227_rule' 'RHEL-08-030310' 'C-33095r568024_chk' 'F-33070r568025_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of the "unix_update" by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w "unix_update" /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/sbin/unix_update -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "unix_update" by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/sbin/unix_update -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230427' 'II' 'medium' 'yes' 'attended-file' '' 'V-230427' \
+        'Successful/unsuccessful uses of postdrop in RHEL 8 must generate an audit record.' \
+        'SV-230427r1017228_rule' 'RHEL-08-030311' 'C-33096r568027_chk' 'F-33071r568028_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of "postdrop" by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w "postdrop" /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/sbin/postdrop -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "postdrop" by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/sbin/postdrop -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230428' 'II' 'medium' 'yes' 'attended-file' '' 'V-230428' \
+        'Successful/unsuccessful uses of postqueue in RHEL 8 must generate an audit record.' \
+        'SV-230428r1017229_rule' 'RHEL-08-030312' 'C-33097r568030_chk' 'F-33072r568031_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of "postqueue" by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w "postqueue" /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/sbin/postqueue -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "postqueue" by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/sbin/postqueue -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230429' 'II' 'medium' 'yes' 'attended-file' '' 'V-230429' \
+        'Successful/unsuccessful uses of semanage in RHEL 8 must generate an audit record.' \
+        'SV-230429r1017230_rule' 'RHEL-08-030313' 'C-33098r568033_chk' 'F-33073r568034_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of "semanage" by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w "semanage" /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/sbin/semanage -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "semanage" by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/sbin/semanage -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230430' 'II' 'medium' 'yes' 'attended-file' '' 'V-230430' \
+        'Successful/unsuccessful uses of setfiles in RHEL 8 must generate an audit record.' \
+        'SV-230430r1017231_rule' 'RHEL-08-030314' 'C-33099r568036_chk' 'F-33074r568037_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of "setfiles" by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w "setfiles" /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/sbin/setfiles -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "setfiles" by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/sbin/setfiles -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230431' 'II' 'medium' 'yes' 'attended-file' '' 'V-230431' \
+        'Successful/unsuccessful uses of userhelper in RHEL 8 must generate an audit record.' \
+        'SV-230431r1017232_rule' 'RHEL-08-030315' 'C-33100r568039_chk' 'F-33075r568040_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of "userhelper" by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w "userhelper" /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/sbin/userhelper -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "userhelper" by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/sbin/userhelper -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230432' 'II' 'medium' 'yes' 'attended-file' '' 'V-230432' \
+        'Successful/unsuccessful uses of setsebool in RHEL 8 must generate an audit record.' \
+        'SV-230432r1017233_rule' 'RHEL-08-030316' 'C-33101r568042_chk' 'F-33076r568043_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of "setsebool" by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w "setsebool" /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/sbin/setsebool -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "setsebool" by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/sbin/setsebool -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230433' 'II' 'medium' 'yes' 'attended-file' '' 'V-230433' \
+        'Successful/unsuccessful uses of unix_chkpwd in RHEL 8 must generate an audit record.' \
+        'SV-230433r1017234_rule' 'RHEL-08-030317' 'C-33102r568045_chk' 'F-33077r568046_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of "unix_chkpwd" by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w "unix_chkpwd" /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/sbin/unix_chkpwd -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "unix_chkpwd" by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/sbin/unix_chkpwd -F perm=x -F auid>=1000 -F auid!=unset -k privileged-unix-update
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230434' 'II' 'medium' 'yes' 'attended-file' '' 'V-230434' \
+        'Successful/unsuccessful uses of the ssh-keysign in RHEL 8 must generate an audit record.' \
+        'SV-230434r1017235_rule' 'RHEL-08-030320' 'C-33103r568048_chk' 'F-33078r744001_fix' \
+        'Verify RHEL 8 generates an audit record when successful/unsuccessful attempts to use the "ssh-keysign" by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep ssh-keysign /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/libexec/openssh/ssh-keysign -F perm=x -F auid>=1000 -F auid!=unset -k privileged-ssh
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful use of the "ssh-keysign" by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/libexec/openssh/ssh-keysign -F perm=x -F auid>=1000 -F auid!=unset -k privileged-ssh
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230435' 'II' 'medium' 'yes' 'attended-file' '' 'V-230435' \
+        'Successful/unsuccessful uses of the setfacl command in RHEL 8 must generate an audit record.' \
+        'SV-230435r1017236_rule' 'RHEL-08-030330' 'C-33104r568051_chk' 'F-33079r568052_fix' \
+        'Verify RHEL 8 generates an audit record when successful/unsuccessful attempts to use the "setfacl" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w setfacl /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/setfacl -F perm=x -F auid>=1000 -F auid!=unset -k perm_mod
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful use of the "setfacl" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/setfacl -F perm=x -F auid>=1000 -F auid!=unset -k perm_mod
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230436' 'II' 'medium' 'yes' 'attended-file' '' 'V-230436' \
+        'Successful/unsuccessful uses of the pam_timestamp_check command in RHEL 8 must generate an audit record.' \
+        'SV-230436r1017237_rule' 'RHEL-08-030340' 'C-33105r568054_chk' 'F-33080r568055_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of the "pam_timestamp_check" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w pam_timestamp_check /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/sbin/pam_timestamp_check -F perm=x -F auid>=1000 -F auid!=unset -k privileged-pam_timestamp_check
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "pam_timestamp_check" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/sbin/pam_timestamp_check -F perm=x -F auid>=1000 -F auid!=unset -k privileged-pam_timestamp_check
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230437' 'II' 'medium' 'yes' 'attended-file' '' 'V-230437' \
+        'Successful/unsuccessful uses of the newgrp command in RHEL 8 must generate an audit record.' \
+        'SV-230437r1017238_rule' 'RHEL-08-030350' 'C-33106r568057_chk' 'F-33081r568058_fix' \
+        'Verify RHEL 8 generates an audit record when successful/unsuccessful attempts to use the "newgrp" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w newgrp /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/newgrp -F perm=x -F auid>=1000 -F auid!=unset -k priv_cmd
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful use of the "newgrp" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/newgrp -F perm=x -F auid>=1000 -F auid!=unset -k priv_cmd
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230444' 'II' 'medium' 'yes' 'attended-file' '' 'V-230444' \
+        'Successful/unsuccessful uses of the gpasswd command in RHEL 8 must generate an audit record.' \
+        'SV-230444r1017244_rule' 'RHEL-08-030370' 'C-33113r568078_chk' 'F-33088r568079_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of the "gpasswd" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w gpasswd /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/gpasswd -F perm=x -F auid>=1000 -F auid!=unset -k privileged-gpasswd
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "gpasswd" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/gpasswd -F perm=x -F auid>=1000 -F auid!=unset -k privileged-gpasswd
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230447' 'II' 'medium' 'yes' 'attended-file' '' 'V-230447' \
+        'Successful/unsuccessful uses of the crontab command in RHEL 8 must generate an audit record.' \
+        'SV-230447r1017246_rule' 'RHEL-08-030400' 'C-33116r568087_chk' 'F-33091r568088_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of the "crontab" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w crontab /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/crontab -F perm=x -F auid>=1000 -F auid!=unset -k privileged-crontab
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "crontab" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/crontab -F perm=x -F auid>=1000 -F auid!=unset -k privileged-crontab
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230448' 'II' 'medium' 'yes' 'attended-file' '' 'V-230448' \
+        'Successful/unsuccessful uses of the chsh command in RHEL 8 must generate an audit record.' \
+        'SV-230448r1017247_rule' 'RHEL-08-030410' 'C-33117r568090_chk' 'F-33092r568091_fix' \
+        'Verify RHEL 8 generates an audit record when successful/unsuccessful attempts to use the "chsh" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w chsh /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/chsh -F perm=x -F auid>=1000 -F auid!=unset -k priv_cmd
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful use of the "chsh" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/chsh -F perm=x -F auid>=1000 -F auid!=unset -k priv_cmd
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230462' 'II' 'medium' 'yes' 'attended-file' '' 'V-230462' \
+        'Successful/unsuccessful uses of the sudo command in RHEL 8 must generate an audit record.' \
+        'SV-230462r1017254_rule' 'RHEL-08-030550' 'C-33131r568132_chk' 'F-33106r568133_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of the "sudo" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w sudo /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/sudo -F perm=x -F auid>=1000 -F auid!=unset -k priv_cmd
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful use of the "sudo" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/sudo -F perm=x -F auid>=1000 -F auid!=unset -k priv_cmd
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230463' 'II' 'medium' 'yes' 'attended-file' '' 'V-230463' \
+        'Successful/unsuccessful uses of the usermod command in RHEL 8 must generate an audit record.' \
+        'SV-230463r1017255_rule' 'RHEL-08-030560' 'C-33132r568135_chk' 'F-33107r568136_fix' \
+        'Verify that an audit event is generated for any successful/unsuccessful use of the "usermod" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w usermod /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/sbin/usermod -F perm=x -F auid>=1000 -F auid!=unset -k privileged-usermod
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful uses of the "usermod" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/sbin/usermod -F perm=x -F auid>=1000 -F auid!=unset -k privileged-usermod
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230464' 'II' 'medium' 'yes' 'attended-file' '' 'V-230464' \
+        'Successful/unsuccessful uses of the chacl command in RHEL 8 must generate an audit record.' \
+        'SV-230464r1017256_rule' 'RHEL-08-030570' 'C-33133r568138_chk' 'F-33108r568139_fix' \
+        'Verify RHEL 8 generates an audit record when successful/unsuccessful attempts to use the "chacl" command by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w chacl /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/chacl -F perm=x -F auid>=1000 -F auid!=unset -k perm_mod
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful use of the "chacl" command by adding or updating the following rule in the "/etc/audit/rules.d/audit.rules" file:
+
+-a always,exit -F path=/usr/bin/chacl -F perm=x -F auid>=1000 -F auid!=unset -k perm_mod
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230465' 'II' 'medium' 'yes' 'attended-file' '' 'V-230465' \
+        'Successful/unsuccessful uses of the kmod command in RHEL 8 must generate an audit record.' \
+        'SV-230465r1262212_rule' 'RHEL-08-030580' 'C-33134r568141_chk' 'F-33109r568142_fix' \
+        'Verify if RHEL 8 is configured to audit the execution of the module management program "kmod", by running the following command:
+
+$ sudo grep "/usr/bin/kmod" /etc/audit/audit.rules
+
+-a always,exit -F path=/usr/bin/kmod -F perm=x -F auid>=1000 -F auid!=unset -k modules
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure RHEL 8 to audit the execution of the module management program "kmod" by adding or updating the following line to "/etc/audit/rules.d/audit.rules":
+
+-a always,exit -F path=/usr/bin/kmod -F perm=x -F auid>=1000 -F auid!=unset -k modules
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230467' 'II' 'medium' 'yes' 'attended-file' '' 'V-230467' \
+        'Successful/unsuccessful modifications to the lastlog file in RHEL 8 must generate an audit record.' \
+        'SV-230467r1262214_rule' 'RHEL-08-030600' 'C-33136r568147_chk' 'F-33111r568148_fix' \
+        'Verify RHEL 8 generates an audit record when successful/unsuccessful modifications to the "lastlog" file by performing the following command to check the file system rules in "/etc/audit/audit.rules":
+
+$ sudo grep -w lastlog /etc/audit/audit.rules
+
+-w /var/log/lastlog -p wa -k logins
+
+If the command does not return a line, or the line is commented out, this is a finding.' \
+        'Configure the audit system to generate an audit event for any successful/unsuccessful modifications to the "lastlog" file by adding or updating the following rules in the "/etc/audit/rules.d/audit.rules" file:
+
+-w /var/log/lastlog -p wa -k logins
+
+The audit daemon must be restarted for the changes to take effect.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230472' 'II' 'medium' 'yes' 'attended-file' '' 'V-230472' \
+        'RHEL 8 audit tools must have a mode of 0755 or less permissive.' \
+        'SV-230472r1017263_rule' 'RHEL-08-030620' 'C-33141r568162_chk' 'F-33116r568163_fix' \
+        'Verify the audit tools are protected from unauthorized access, deletion, or modification by checking the permissive mode.
+
+Check the octal permission of each audit tool by running the following command:
+
+$ sudo stat -c "%a %n" /sbin/auditctl /sbin/aureport /sbin/ausearch /sbin/autrace /sbin/auditd /sbin/rsyslogd /sbin/augenrules
+
+755 /sbin/auditctl
+755 /sbin/aureport
+755 /sbin/ausearch
+750 /sbin/autrace
+755 /sbin/auditd
+755 /sbin/rsyslogd
+755 /sbin/augenrules
+
+If any of the audit tools has a mode more permissive than "0755", this is a finding.' \
+        'Configure the audit tools to be protected from unauthorized access by setting the correct permissive mode using the following command:
+
+$ sudo chmod 0755 [audit_tool]
+
+Replace "[audit_tool]" with the audit tool that does not have the correct permissive mode.' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230474' 'II' 'medium' 'yes' 'attended-file' '' 'V-230474' \
+        'RHEL 8 audit tools must be group-owned by root.' \
+        'SV-230474r1017265_rule' 'RHEL-08-030640' 'C-33143r568168_chk' 'F-33118r568169_fix' \
+        'Verify the audit tools are group-owned by "root" to prevent any unauthorized access, deletion, or modification.
+
+Check the owner of each audit tool by running the following commands:
+
+$ sudo stat -c "%G %n" /sbin/auditctl /sbin/aureport /sbin/ausearch /sbin/autrace /sbin/auditd /sbin/rsyslogd /sbin/augenrules
+
+root /sbin/auditctl
+root /sbin/aureport
+root /sbin/ausearch
+root /sbin/autrace
+root /sbin/auditd
+root /sbin/rsyslogd
+root /sbin/augenrules
+
+If any of the audit tools are not group-owned by "root", this is a finding.' \
+        'Configure the audit tools to be group-owned by "root", by running the following command:
+
+$ sudo chgrp root [audit_tool]
+
+Replace "[audit_tool]" with each audit tool not group-owned by "root".' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230531' 'I' 'high' 'yes' 'attended-file' '' 'V-230531' \
+        'The systemd Ctrl-Alt-Delete burst key sequence in RHEL 8 must be disabled.' \
+        'SV-230531r1262161_rule' 'RHEL-08-040172' 'C-33200r1208753_chk' 'F-33175r1261882_fix' \
+        'Verify RHEL 8 is configured to not reboot the system when Ctrl-Alt-Delete is pressed seven times within two seconds with the following command:
+
+$ sudo grep -iR CtrlAltDelBurstAction /etc/systemd/system*
+/etc/systemd/system.conf.d/55-CtrlAltDel-BurstAction.conf:CtrlAltDelBurstAction=none
+
+If the "CtrlAltDelBurstAction" is not set to "none", is commented out, or is missing, this is a finding.' \
+        'Configure RHEL 8 to disable the CtrlAltDelBurstAction by adding it to a drop file in a "/etc/systemd/system.conf.d/" configuration file:
+
+If no drop file exists, create one with the following command:
+
+$ sudo mkdir -p /etc/systemd/system.conf.d && sudo vi /etc/systemd/system.conf.d/55-CtrlAltDel-BurstAction.conf
+
+Edit the file to contain the setting by adding the following text:
+
+[Manager]
+CtrlAltDelBurstAction=none
+
+Reload the daemon for this change to take effect.
+
+$ sudo systemctl daemon-reload' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230535' 'II' 'medium' 'yes' 'attended-file' '' 'V-230535' \
+        'RHEL 8 must prevent IPv6 Internet Control Message Protocol (ICMP) redirect messages from being accepted.' \
+        'SV-230535r1017297_rule' 'RHEL-08-040210' 'C-33204r833339_chk' 'F-33179r858792_fix' \
+        'Verify RHEL 8 will not accept IPv6 ICMP redirect messages.
+
+Note: If IPv6 is disabled on the system, this requirement is Not Applicable.
+
+Check the value of the default "accept_redirects" variables with the following command:
+
+$ sudo sysctl net.ipv6.conf.default.accept_redirects
+
+net.ipv6.conf.default.accept_redirects = 0
+
+If the returned line does not have a value of "0", a line is not returned, or the line is commented out, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv6.conf.default.accept_redirects /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv6.conf.default.accept_redirects = 0
+
+If "net.ipv6.conf.default.accept_redirects" is not set to "0", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to prevent IPv6 ICMP redirect messages from being accepted.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv6.conf.default.accept_redirects = 0
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230536' 'II' 'medium' 'yes' 'attended-file' '' 'V-230536' \
+        'RHEL 8 must not allow IPv4 ICMP redirect messages.' \
+        'SV-230536r1208868_rule' 'RHEL-08-040220' 'C-33205r1208411_chk' 'F-33180r858794_fix' \
+        'Verify RHEL 8 does not IPv4 ICMP redirect messages.
+
+Check the value of the "all send_redirects" variables with the following command:
+
+$ sudo sysctl net.ipv4.conf.all.send_redirects
+net.ipv4.conf.all.send_redirects = 0
+
+If the returned line does not have a value of "0", or a line is not returned, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv4.conf.all.send_redirects /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv4.conf.all.send_redirects = 0
+
+If "net.ipv4.conf.all.send_redirects" is not set to "0", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to not allow interfaces to perform IPv4 ICMP redirects.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv4.conf.all.send_redirects=0
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230537' 'II' 'medium' 'yes' 'attended-file' '' 'V-230537' \
+        'RHEL 8 must not respond to Internet Control Message Protocol (ICMP) echoes sent to a broadcast address.' \
+        'SV-230537r1017299_rule' 'RHEL-08-040230' 'C-33206r833343_chk' 'F-33181r858796_fix' \
+        'Verify RHEL 8 does not respond to ICMP echoes sent to a broadcast address.
+
+Check the value of the "icmp_echo_ignore_broadcasts" variable with the following command:
+
+$ sudo sysctl net.ipv4.icmp_echo_ignore_broadcasts
+
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+If the returned line does not have a value of "1", a line is not returned, or the retuned line is commented out, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv4.icmp_echo_ignore_broadcasts /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+If "net.ipv4.icmp_echo_ignore_broadcasts" is not set to "1", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to not respond to IPv4 ICMP echoes sent to a broadcast address.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv4.icmp_echo_ignore_broadcasts=1
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230538' 'II' 'medium' 'yes' 'attended-file' '' 'V-230538' \
+        'RHEL 8 must not forward IPv6 source-routed packets.' \
+        'SV-230538r1017300_rule' 'RHEL-08-040240' 'C-33207r833345_chk' 'F-33182r858800_fix' \
+        'Verify RHEL 8 does not accept IPv6 source-routed packets.
+
+Note: If IPv6 is disabled on the system, this requirement is Not Applicable.
+
+Check the value of the accept source route variable with the following command:
+
+$ sudo sysctl net.ipv6.conf.all.accept_source_route
+
+net.ipv6.conf.all.accept_source_route = 0
+
+If the returned line does not have a value of "0", a line is not returned, or the line is commented out, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv6.conf.all.accept_source_route /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv6.conf.all.accept_source_route = 0
+
+If "net.ipv6.conf.all.accept_source_route" is not set to "0", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to not forward IPv6 source-routed packets.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv6.conf.all.accept_source_route=0
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230539' 'II' 'medium' 'yes' 'attended-file' '' 'V-230539' \
+        'RHEL 8 must not forward IPv6 source-routed packets by default.' \
+        'SV-230539r1017301_rule' 'RHEL-08-040250' 'C-33208r861084_chk' 'F-33183r858805_fix' \
+        'Verify RHEL 8 does not accept IPv6 source-routed packets by default.
+
+Note: If IPv6 is disabled on the system, this requirement is Not Applicable.
+
+Check the value of the accept source route variable with the following command:
+
+$ sudo sysctl net.ipv6.conf.default.accept_source_route
+
+net.ipv6.conf.default.accept_source_route = 0
+
+If the returned line does not have a value of "0", a line is not returned, or the line is commented out, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv6.conf.default.accept_source_route /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv6.conf.default.accept_source_route = 0
+
+If "net.ipv6.conf.default.accept_source_route" is not set to "0", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to not forward IPv6 source-routed packets by default.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv6.conf.default.accept_source_route=0
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230543' 'II' 'medium' 'yes' 'attended-file' '' 'V-230543' \
+        'RHEL 8 must not allow interfaces to perform Internet Control Message Protocol (ICMP) redirects by default.' \
+        'SV-230543r1017305_rule' 'RHEL-08-040270' 'C-33212r833354_chk' 'F-33187r858815_fix' \
+        'Verify RHEL 8 does not allow interfaces to perform Internet Protocol version 4 (IPv4) ICMP redirects by default.
+
+Check the value of the "default send_redirects" variables with the following command:
+
+$ sudo sysctl net.ipv4.conf.default.send_redirects
+
+net.ipv4.conf.default.send_redirects=0
+
+If the returned line does not have a value of "0", or a line is not returned, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv4.conf.default.send_redirects /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv4.conf.default.send_redirects = 0
+
+If "net.ipv4.conf.default.send_redirects" is not set to "0", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to not allow interfaces to perform Internet Protocol version 4 (IPv4) ICMP redirects by default.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv4.conf.default.send_redirects = 0
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230544' 'II' 'medium' 'yes' 'attended-file' '' 'V-230544' \
+        'RHEL 8 must ignore IPv6 Internet Control Message Protocol (ICMP) redirect messages.' \
+        'SV-230544r1017306_rule' 'RHEL-08-040280' 'C-33213r833356_chk' 'F-33188r858819_fix' \
+        'Verify RHEL 8 ignores IPv6 ICMP redirect messages.
+
+Note: If IPv6 is disabled on the system, this requirement is Not Applicable.
+
+Check the value of the "accept_redirects" variables with the following command:
+
+$ sudo sysctl net.ipv6.conf.all.accept_redirects
+
+net.ipv6.conf.all.accept_redirects = 0
+
+If the returned line does not have a value of "0", a line is not returned, or the line is commented out, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv6.conf.all.accept_redirects /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv6.conf.all.accept_redirects = 0
+
+If "net.ipv6.conf.all.accept_redirects" is not set to "0", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to ignore IPv6 ICMP redirect messages.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv6.conf.all.accept_redirects = 0
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230547' 'II' 'medium' 'yes' 'attended-file' '' 'V-230547' \
+        'RHEL 8 must restrict exposed kernel pointer addresses access.' \
+        'SV-230547r1184283_rule' 'RHEL-08-040283' 'C-33216r1184281_chk' 'F-33191r1184282_fix' \
+        'Verify RHEL 8 is configured to restrict exposed kernel pointer address access.
+
+Verify the runtime status of the "kernel.kptr_restrict" kernel parameter with the following command:
+
+$ sudo sysctl kernel.kptr_restrict
+kernel.kptr_restrict = 1
+
+If "kernel.kptr_restrict" is not set to "1" or is missing, this is a finding.' \
+        'Configure RHEL 8 to restrict exposed kernel pointer addresses access.
+
+Create a drop-in if it does not already exist:
+
+$ sudo vi /etc/sysctl.d/99-kernel_kptr_restrict.conf
+
+Add the following to the file:
+kernel.kptr_restrict = 1
+
+Reload settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-230556' 'II' 'high' 'yes' 'attended-file' '' 'V-230556' \
+        'The RHEL 8 SSH daemon must prevent remote hosts from connecting to the proxy display.' \
+        'SV-230556r1017318_rule' 'RHEL-08-040341' 'C-33225r951619_chk' 'F-33200r568415_fix' \
+        'Verify the SSH daemon prevents remote hosts from connecting to the proxy display.
+
+Check the SSH X11UseLocalhost setting with the following command:
+
+$ sudo /usr/sbin/sshd -dd 2>&1 | awk '\''/filename/ {print $4}'\'' | tr -d '\''\r'\'' | tr '\''\n'\'' '\'' '\'' | xargs sudo grep -iH '\''^\s*x11uselocalhost'\''
+
+X11UseLocalhost yes
+
+If the "X11UseLocalhost" keyword is set to "no", is missing, or is commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure the SSH daemon to prevent remote hosts from connecting to the proxy display.
+
+Edit the "/etc/ssh/sshd_config" file to uncomment or add the line for the "X11UseLocalhost" keyword and set its value to "yes" (this file may be named differently or be in a different location if using a version of SSH that is provided by a third-party vendor):
+
+X11UseLocalhost yes' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-244519' 'II' 'medium' 'yes' 'attended-file' '' 'V-244519' \
+        'RHEL 8 must display a banner before granting local or remote access to the system via a graphical user logon.' \
+        'SV-244519r1017326_rule' 'RHEL-08-010049' 'C-47794r743804_chk' 'F-47751r743805_fix' \
+        'Verify RHEL 8 displays a banner before granting access to the operating system via a graphical user logon.
+
+Note: This requirement assumes the use of the RHEL 8 default graphical user interface, Gnome Shell. If the system does not have any graphical user interface installed, this requirement is Not Applicable.
+
+Check to see if the operating system displays a banner at the logon screen with the following command:
+
+$ sudo grep banner-message-enable /etc/dconf/db/local.d/*
+
+banner-message-enable=true
+
+If "banner-message-enable" is set to "false" or is missing, this is a finding.' \
+        'Configure the operating system to display a banner before granting access to the system.
+
+Note: If the system does not have a graphical user interface installed, this requirement is Not Applicable.
+
+Create a database to contain the system-wide graphical user logon settings (if it does not already exist) with the following command:
+
+$ sudo touch /etc/dconf/db/local.d/01-banner-message
+
+Add the following lines to the [org/gnome/login-screen] section of the "/etc/dconf/db/local.d/01-banner-message":
+
+[org/gnome/login-screen]
+
+banner-message-enable=true
+
+Run the following command to update the database:
+
+$ sudo dconf update' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-244525' 'II' 'high' 'yes' 'attended-file' '' 'V-244525' \
+        'RHEL 8 must be configured so that all network connections associated with SSH traffic are terminated after 10 minutes of becoming unresponsive.' \
+        'SV-244525r1017331_rule' 'RHEL-08-010201' 'C-47800r951595_chk' 'F-47757r917885_fix' \
+        'Verify the SSH server automatically terminates a user session after the SSH client has been unresponsive for 10 minutes.
+
+Check that the "ClientAliveInterval" variable is set to a value of "600" or less by performing the following command:
+
+$ sudo /usr/sbin/sshd -dd 2>&1 | awk '\''/filename/ {print $4}'\'' | tr -d '\''\r'\'' | tr '\''\n'\'' '\'' '\'' | xargs sudo grep -iH '\''^\s*clientaliveinterval'\''
+
+ClientAliveInterval 600
+
+If "ClientAliveInterval" does not exist, does not have a value of "600" or less in "/etc/ssh/sshd_config", or is commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Note: This setting must be applied in conjunction with RHEL-08-010200 to function correctly.
+
+Configure the SSH server to terminate a user session automatically after the SSH client has been unresponsive for 10 minutes.
+
+Modify or append the following lines in the "/etc/ssh/sshd_config" file:
+
+     ClientAliveInterval 600
+
+For the changes to take effect, the SSH daemon must be restarted.
+
+     $ sudo systemctl restart sshd.service' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-244535' 'II' 'medium' 'yes' 'attended-file' '' 'V-244535' \
+        'RHEL 8 must initiate a session lock for graphical user interfaces when the screensaver is activated.' \
+        'SV-244535r1017342_rule' 'RHEL-08-020031' 'C-47810r743852_chk' 'F-47767r743853_fix' \
+        'Verify the operating system initiates a session lock a for graphical user interfaces when the screensaver is activated with the following command:
+
+Note: This requirement assumes the use of the RHEL 8 default graphical user interface, Gnome Shell. If the system does not have any graphical user interface installed, this requirement is Not Applicable.
+
+$ sudo gsettings get org.gnome.desktop.screensaver lock-delay
+
+uint32 5
+
+If the "uint32" setting is missing, or is not set to "5" or less, this is a finding.' \
+        'Configure the operating system to initiate a session lock for graphical user interfaces when a screensaver is activated.
+
+Create a database to contain the system-wide screensaver settings (if it does not already exist) with the following command:
+
+Note: The example below is using the database "local" for the system, so if the system is using another database in "/etc/dconf/profile/user", the file should be created under the appropriate subdirectory.
+
+$ sudo touch /etc/dconf/db/local.d/00-screensaver
+
+[org/gnome/desktop/screensaver]
+lock-delay=uint32 5
+
+The "uint32" must be included along with the integer key values as shown.
+
+Update the system databases:
+
+$ sudo dconf update' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-244550' 'II' 'medium' 'yes' 'attended-file' '' 'V-244550' \
+        'RHEL 8 must prevent IPv4 Internet Control Message Protocol (ICMP) redirect messages from being accepted.' \
+        'SV-244550r1017350_rule' 'RHEL-08-040209' 'C-47825r833372_chk' 'F-47782r858790_fix' \
+        'Verify RHEL 8 will not accept IPv4 ICMP redirect messages.
+
+Check the value of the default "accept_redirects" variables with the following command:
+
+$ sudo sysctl net.ipv4.conf.default.accept_redirects
+
+net.ipv4.conf.default.accept_redirects = 0
+
+If the returned line does not have a value of "0", a line is not returned, or the line is commented out, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv4.conf.default.accept_redirects /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv4.conf.default.accept_redirects = 0
+
+If "net.ipv4.conf.default.accept_redirects" is not set to "0", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to prevent IPv4 ICMP redirect messages from being accepted.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv4.conf.default.accept_redirects = 0
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-244551' 'II' 'medium' 'yes' 'attended-file' '' 'V-244551' \
+        'RHEL 8 must not forward IPv4 source-routed packets.' \
+        'SV-244551r1017351_rule' 'RHEL-08-040239' 'C-47826r833374_chk' 'F-47783r858798_fix' \
+        'Verify RHEL 8 does not accept IPv4 source-routed packets.
+
+Check the value of the accept source route variable with the following command:
+
+$ sudo sysctl net.ipv4.conf.all.accept_source_route
+
+net.ipv4.conf.all.accept_source_route = 0
+
+If the returned line does not have a value of "0", a line is not returned, or the line is commented out, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv4.conf.all.accept_source_route /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv4.conf.all.accept_source_route = 0
+
+If "net.ipv4.conf.all.accept_source_route" is not set to "0", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to not forward IPv4 source-routed packets.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv4.conf.all.accept_source_route=0
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-244552' 'II' 'medium' 'yes' 'attended-file' '' 'V-244552' \
+        'RHEL 8 must not forward IPv4 source-routed packets by default.' \
+        'SV-244552r1017352_rule' 'RHEL-08-040249' 'C-47827r833376_chk' 'F-47784r858802_fix' \
+        'Verify RHEL 8 does not accept IPv4 source-routed packets by default.
+
+Check the value of the accept source route variable with the following command:
+
+$ sudo sysctl net.ipv4.conf.default.accept_source_route
+
+net.ipv4.conf.default.accept_source_route = 0
+
+If the returned line does not have a value of "0", a line is not returned, or the line is commented out, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv4.conf.default.accept_source_route /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv4.conf.default.accept_source_route = 0
+
+If "net.ipv4.conf.default.accept_source_route" is not set to "0", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to not forward IPv4 source-routed packets by default.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv4.conf.default.accept_source_route=0
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-244553' 'II' 'medium' 'yes' 'attended-file' '' 'V-244553' \
+        'RHEL 8 must ignore IPv4 Internet Control Message Protocol (ICMP) redirect messages.' \
+        'SV-244553r1017353_rule' 'RHEL-08-040279' 'C-47828r833378_chk' 'F-47785r858817_fix' \
+        'Verify RHEL 8 ignores IPv4 ICMP redirect messages.
+
+Check the value of the "accept_redirects" variables with the following command:
+
+$ sudo sysctl net.ipv4.conf.all.accept_redirects
+
+net.ipv4.conf.all.accept_redirects = 0
+
+If the returned line does not have a value of "0", a line is not returned, or the line is commented out, this is a finding.
+
+Check that the configuration files are present to enable this network parameter.
+
+$ sudo grep -r net.ipv4.conf.all.accept_redirects /run/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf /etc/sysctl.conf /etc/sysctl.d/*.conf
+
+/etc/sysctl.d/99-sysctl.conf: net.ipv4.conf.all.accept_redirects = 0
+
+If "net.ipv4.conf.all.accept_redirects" is not set to "0", is missing or commented out, this is a finding.
+
+If conflicting results are returned, this is a finding.' \
+        'Configure RHEL 8 to ignore IPv4 ICMP redirect messages.
+
+Add or edit the following line in a system configuration file, in the "/etc/sysctl.d/" directory:
+
+net.ipv4.conf.all.accept_redirects = 0
+
+Remove any configurations that conflict with the above from the following locations:
+/run/sysctl.d/*.conf
+/usr/local/lib/sysctl.d/*.conf
+/usr/lib/sysctl.d/*.conf
+/lib/sysctl.d/*.conf
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+
+Load settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-251716' 'II' 'high' 'yes' 'attended-file' '' 'V-251716' \
+        'RHEL 8 systems, version 8.4 and above, must ensure the password complexity module is configured for three retries or less.' \
+        'SV-251716r1069329_rule' 'RHEL-08-020104' 'C-55153r1069267_chk' 'F-55107r1069268_fix' \
+        'Note: This requirement applies to RHEL versions 8.4 or newer. If the system is RHEL below version 8.4, this requirement is not applicable.
+
+Verify RHEL 8 is configured to limit the "pwquality" retry option to "3".
+
+Check for the use of the retry option in the security directory with the following command:
+
+$ grep -w retry /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf
+
+retry = 3
+
+If the value of "retry" is set to "0" or greater than "3", or is missing, this is a finding.' \
+        'Configure RHEL 8 to limit the "pwquality" retry option to "3".
+
+Add or update the following line in the "/etc/security/pwquality.conf" file or a file in the "/etc/security/pwquality.conf.d/" directory to contain the "retry" parameter:
+
+retry = 3' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-284948' 'II' 'medium' 'yes' 'attended-file' '' 'V-284948' \
+        'RHEL 8 must log IPv4 packets with impossible addresses.' \
+        'SV-284948r1262225_rule' 'RHEL-08-040221' 'C-89517r1208427_chk' 'F-89422r1208756_fix' \
+        'Verify RHEL 8 logs IPv4 martian packets.
+
+Check the value of the "log_martians" variable with the following command:
+
+$ sudo sysctl net.ipv4.conf.all.log_martians
+net.ipv4.conf.all.log_martians = 1
+
+If "net.ipv4.conf.all.log_martians" is not set to "1" or is missing, this is a finding.' \
+        'Configure RHEL 8 to log martian packets on IPv4 interfaces.
+
+Create a configuration file if it does not already exist:
+
+$ sudo vi /etc/sysctl.d/ipv4_log_martians.conf
+
+Add the following line to the file:
+
+net.ipv4.conf.all.log_martians=1
+
+Reload settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    # shellcheck disable=SC2016,SC1112 # DISA references are quoted verbatim.
+    register_rule 'V-284949' 'II' 'medium' 'yes' 'attended-file' '' 'V-284949' \
+        'RHEL 8 must log IPv4 packets with impossible addresses by default.' \
+        'SV-284949r1262226_rule' 'RHEL-08-040222' 'C-89518r1208430_chk' 'F-89423r1208758_fix' \
+        'Verify RHEL 8 logs IPv4 martian packets by default.
+
+Check the value of the "default.log_martians" variable with the following command:
+
+$ sudo sysctl net.ipv4.conf.default.log_martians
+net.ipv4.conf.default.log_martians = 1
+
+If "net.ipv4.conf.default.log_martians" is not set to "1" or is missing, this is a finding.' \
+        'Configure RHEL 8 to log martian packets on IPv4 interfaces by default.
+
+Create a configuration file if it does not already exist:
+
+$ sudo vi /etc/sysctl.d/ipv4_log_martians.conf
+
+Add the following line to the file:
+
+net.ipv4.conf.default.log_martians=1
+
+Reload settings from all system configuration files with the following command:
+
+$ sudo sysctl --system' || return 1
+
+    mapfile -t RULE_IDS < <(printf '%s\n' "${RULE_IDS[@]}" | LC_ALL=C sort)
     validate_registry
 }
 
@@ -8345,7 +10556,7 @@ def main():
     root = info(parent)
     if root.st_uid != 0 or root.st_mode & 0o022 or not local_mount(parent):
         raise ValueError("Parent must be root-controlled local storage")
-    if operation.startswith("home-") and len(parts) == 1:
+    if operation in ("home-observe", "home-create", "home-remove") and len(parts) == 1:
         home_operation(parent, parts[0], operation, *sys.argv[4:])
         return
     home = open_child(parent, parts[0])
@@ -8354,9 +10565,23 @@ def main():
     if operation == "inventory" and len(parts) == 1:
         walk(home, path, uid, [20000], 0)
         return
-    if len(parts) < 2 or any(part.startswith(".") for part in parts):
-        raise ValueError("Excluded path")
-    target = locate(home, parts[1:])
+    if operation in ("home-mode-observe", "home-mode-change") and len(parts) == 1:
+        target = os.dup(home)
+        operation = operation[5:]
+    elif operation in ("init-mode-observe", "init-mode-change") and len(parts) == 2:
+        startup_files = (".bash_profile", ".bash_login", ".bashrc", ".bash_logout", ".profile",
+                         ".cshrc", ".tcshrc", ".login", ".logout", ".kshrc", ".zprofile",
+                         ".zshrc", ".zlogin", ".zlogout")
+        if parts[1] not in startup_files:
+            raise ValueError("Excluded initialization file")
+        target = locate(home, parts[1:])
+        if not stat.S_ISREG(info(target).st_mode):
+            raise ValueError("Initialization object is not a file")
+        operation = operation[5:]
+    else:
+        if len(parts) < 2 or any(part.startswith(".") for part in parts):
+            raise ValueError("Excluded path")
+        target = locate(home, parts[1:])
     actual = mode_state(target, uid)
     fd = read_fd(target)
     if not plain_attributes(fd):
@@ -10554,6 +12779,16 @@ tui_input() {
 
 tui_area() {
     case $1 in
+        V-230324|V-230357|V-230358|V-230359|V-230360|V-230361|V-230362|V-230363|V-230365|V-230366|V-230369|V-230375|V-230377|V-230378|V-230383|V-251716) REPLY=Identity ;;
+        V-230281) REPLY=Packages ;;
+        V-230393|V-230395|V-230397|V-230399|V-230404|V-230405|V-230406|V-230407|V-230408|V-230409|V-230410|V-230412|V-230418|V-230419|V-230421|V-230422|V-230423|V-230424|V-230426|V-230427|V-230428|V-230429|V-230430|V-230431|V-230432|V-230433|V-230434|V-230435|V-230436|V-230437|V-230444|V-230447|V-230448|V-230462|V-230463|V-230464|V-230465|V-230467|V-230472|V-230474) REPLY=Audit ;;
+        V-230267|V-230268|V-230269|V-230270|V-230280|V-230547) REPLY=Kernel ;;
+        V-230535|V-230536|V-230537|V-230538|V-230539|V-230543|V-230544|V-244550|V-244551|V-244552|V-244553|V-284948|V-284949) REPLY=Network ;;
+        V-230244|V-230286|V-230288|V-230290|V-230330|V-230382|V-230556|V-244525) REPLY=SSH ;;
+        V-230245|V-230246|V-230247|V-230248|V-230250) REPLY=Logging ;;
+        V-230321|V-230325) REPLY=Files ;;
+        V-230347|V-244519|V-244535) REPLY=Desktop ;;
+        V-230227|V-230531) REPLY=Sessions ;;
         V-230224|V-230301|V-230302|V-230306|V-230307|V-230498|V-230503) REPLY=Storage ;;
         V-230226|V-230352|V-230530|V-244536|V-251718) REPLY=Desktop ;;
         V-230229|V-230274|V-230351|V-230372) REPLY=PKI ;;
@@ -12079,6 +14314,2337 @@ main() {
         fi
     fi
     return "$run_result"
+}
+
+# Scoped password-quality, account defaults and DNF cleanup plans.
+
+account_policy_path() {
+    case $1 in
+        quality) printf '%s\n' /etc/security/pwquality.conf ;;
+        login) printf '%s\n' /etc/login.defs ;;
+        dnf) printf '%s\n' /etc/dnf/dnf.conf ;;
+        *) return 1 ;;
+    esac
+}
+
+account_policy_pam_directory() { printf '%s\n' /etc/pam.d; }
+
+# Keep explicit benchmark values separate from effective PAM behavior. Only
+# stage direct local directives. Other sources enter the plan fingerprint.
+account_policy_io() {
+    repo_platform_python -I - "$@" <<'PY'
+import configparser
+import ctypes
+import hashlib
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+
+class Review(Exception):
+    pass
+
+
+POLICY = {
+    "quality": {
+        "V-230357": ("ucredit", "-1", "negative"),
+        "V-230358": ("lcredit", "-1", "negative"),
+        "V-230359": ("dcredit", "-1", "negative"),
+        "V-230360": ("maxclassrepeat", "4", "positive_max"),
+        "V-230361": ("maxrepeat", "3", "positive_max"),
+        "V-230362": ("minclass", "4", "exact"),
+        "V-230363": ("difok", "8", "minimum"),
+        "V-230369": ("minlen", "15", "minimum"),
+        "V-230375": ("ocredit", "-1", "negative"),
+        "V-230377": ("dictcheck", "1", "exact"),
+        "V-251716": ("retry", "3", "positive_max"),
+    },
+    "login": {
+        "V-230324": ("CREATE_HOME", "yes", "yes"),
+        "V-230365": ("PASS_MIN_DAYS", "1", "minimum"),
+        "V-230366": ("PASS_MAX_DAYS", "180", "positive_max"),
+        "V-230378": ("FAIL_DELAY", "4", "minimum"),
+        "V-230383": ("UMASK", "077", "exact"),
+    },
+    "dnf": {"V-230281": ("clean_requirements_on_remove", "True", "true")},
+}
+QUALITY_KEYS = set(spec[0] for spec in POLICY["quality"].values())
+PAM_OPTIONS = {
+    "debug", "try_first_pass", "use_first_pass", "use_authtok", "enforce_for_root",
+    "local_users_only", "authtok_type", "type", "badwords", "dictpath",
+    "usercheck", "usersubstr", "gecoscheck", "enforcing",
+} | QUALITY_KEYS
+INTEGER = re.compile(r"-?(?:0|[1-9][0-9]{0,8})\Z")
+DIRECT_PATH = re.compile(r"[A-Za-z0-9_.-]+\.conf\Z")
+
+
+def controlled(path, directory=False):
+    kind = stat.S_ISDIR if directory else stat.S_ISREG
+    if not path.is_absolute():
+        raise Review("a configuration path is not absolute")
+    info = path.lstat()
+    if not kind(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise Review("a configuration source is linked, writable or outside the root-owned layout")
+    if not directory and (info.st_size > 131072 or info.st_nlink != 1):
+        raise Review("a configuration source is oversized or hard linked")
+    for parent in path.parents:
+        info = parent.lstat()
+        # Temporary test fixtures may live under a root-owned sticky directory.
+        # Production paths and transaction candidates are already constrained
+        # by the Bash backend and have private/root-controlled immediate parents.
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
+            raise Review("a configuration parent is linked or has unexpected ownership")
+        if info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX:
+            raise Review("a configuration parent is writable")
+
+
+def read_file(path):
+    controlled(path)
+    with path.open("rb") as file:
+        data = file.read(131073)
+    if (len(data) > 131072 or re.search(rb"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", data)
+            or b"\r" in data.replace(b"\r\n", b"")):
+        raise Review("a configuration source contains unsupported bytes or exceeds the size limit")
+    return data.decode("utf-8")
+
+
+def active_line(line):
+    return line.partition("#")[0].strip()
+
+
+def settings(text, separator, keys):
+    result = {}
+    for index, line in enumerate(text.splitlines(True)):
+        active = active_line(line)
+        if not active:
+            continue
+        key = re.split(r"[ \t=]", active, maxsplit=1)[0]
+        normalize = str.upper if separator == "login" else str.lower
+        key_match = normalize(key)
+        if key_match not in keys:
+            continue
+        if separator == "login" and key != key_match:
+            raise Review("login.defs has an unsupported spelling for a policy option")
+        tail = active[len(key):]
+        lead = r"[ \t]+" if separator == "login" else r"(?:[ \t]*=[ \t]*|[ \t]+)"
+        found = re.fullmatch(lead + r"([^ \t=]+)", tail)
+        if not found:
+            raise Review("a policy option has unsupported assignment syntax")
+        result.setdefault(key_match, []).append((index, found.group(1)))
+    return result
+
+
+def meets(value, target, predicate):
+    if value is None:
+        return False
+    if predicate in {"yes", "true"}:
+        accepted = {"yes"} if predicate == "yes" else {"1", "true", "yes"}
+        rejected = {"no"} if predicate == "yes" else {"0", "false", "no"}
+        if value.lower() not in accepted | rejected:
+            raise Review("a Boolean policy option has unsupported syntax")
+        return value.lower() in accepted
+    if not INTEGER.fullmatch(value) and not (
+        target == "077" and re.fullmatch(r"[0-7]{1,4}", value)
+    ):
+        raise Review("a policy option is outside its supported integer syntax")
+    actual = int(value, 8 if target == "077" else 10)
+    needed = int(target, 8 if target == "077" else 10)
+    if predicate == "negative":
+        return actual <= needed
+    if predicate == "positive_max":
+        return 0 < actual <= needed
+    if predicate == "minimum":
+        return actual >= needed
+    return actual == needed
+
+
+def native_pwquality(path):
+    library = ctypes.CDLL("/usr/lib64/libpwquality.so.1")
+    library.pwquality_default_settings.restype = ctypes.c_void_p
+    library.pwquality_read_config.argtypes = (
+        ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p),
+    )
+    library.pwquality_free_settings.argtypes = (ctypes.c_void_p,)
+    library.pwquality_free_settings.restype = None
+    handle = library.pwquality_default_settings()
+    if not handle:
+        raise Review("libpwquality could not allocate settings")
+    try:
+        if library.pwquality_read_config(handle, os.fsencode(str(path)), None):
+            raise Review("the native libpwquality parser rejected the configuration")
+    finally:
+        library.pwquality_free_settings(handle)
+
+
+def read_pam(pam):
+    sources = []
+    stacks = []
+    for name in ("system-auth", "password-auth"):
+        link = pam / name
+        active = link.resolve(strict=True)
+        if active not in {link, Path("/etc/authselect") / name}:
+            raise Review("the active PAM stack resolves outside the supported local layout")
+        data = read_file(active)
+        sources.append((str(active), data))
+        before_writer = True
+        quality_count = 0
+        token_writers = 0
+        overrides = {}
+        for line in data.splitlines():
+            words = active_line(line).split()
+            if not words or words[0].lstrip("-") != "password":
+                continue
+            if len(words) < 3 or words[0] != "password":
+                raise Review("the active password stack contains an unsupported control")
+            control, module_path = words[1:3]
+            module = Path(module_path).name
+            if module_path not in {module, "/usr/lib64/security/" + module, "/lib64/security/" + module}:
+                raise Review("the local PAM stack references a module outside the native directory")
+            options = words[3:]
+            if module == "pam_pwquality.so":
+                if not before_writer or quality_count or control not in {"required", "requisite"}:
+                    raise Review("the password-quality module is not an unambiguous required check")
+                quality_count += 1
+                for option in options:
+                    option_name, equal, value = option.partition("=")
+                    if (option_name not in PAM_OPTIONS or option_name in overrides
+                        or not re.fullmatch(r"[a-zA-Z0-9_./,-]*", value)):
+                        raise Review("an active PAM password-quality override needs administrator review")
+                    if option_name in QUALITY_KEYS | {"enforcing"}:
+                        if not equal or not INTEGER.fullmatch(value):
+                            raise Review("an active PAM password-quality override is not a supported integer")
+                    # Record nonnumeric option names only, not their values.
+                    overrides[option_name] = value if option_name in QUALITY_KEYS | {"enforcing"} else None
+            elif module == "pam_unix.so":
+                if (not quality_count or token_writers
+                        or control not in {"required", "requisite", "sufficient"}
+                        or "use_authtok" not in options):
+                    raise Review("the local PAM password writer bypasses or replaces the checked token")
+                before_writer = False
+                token_writers += 1
+            elif before_writer and not (
+                quality_count and module == "pam_pwhistory.so"
+                and control in {"required", "requisite"} and "use_authtok" in options
+            ):
+                raise Review("a PAM branch can bypass or replace the checked password token")
+        if quality_count != 1 or token_writers != 1:
+            raise Review("a supported local PAM password quality and writer pair was not found")
+        stacks.append(overrides)
+    # The standard local passwd service must actually delegate to the checked
+    # system-auth stack. Never evaluate password changes or submit credentials.
+    passwd = pam / "passwd"
+    data = read_file(passwd)
+    statements = [line.split() for raw in data.splitlines()
+                  for line in [active_line(raw)] if re.match(r"^-?password(?:\s|$)", line)]
+    if (not statements or statements[0] not in
+        (["password", "substack", "system-auth"], ["password", "include", "system-auth"])
+        or any(s != ["password", "include", "postlogin"] for s in statements[1:])):
+        raise Review("the local passwd service does not have the supported PAM delegation")
+    sources.append((str(passwd), data))
+    if len(statements) > 1:
+        post = (pam / "postlogin").resolve(strict=True)
+        if post not in {pam / "postlogin", Path("/etc/authselect/postlogin")}:
+            raise Review("the local PAM postlogin source resolves outside the supported layout")
+        data = read_file(post)
+        if any(re.match(r"^-?password(?:\s|$)", active_line(raw)) for raw in data.splitlines()):
+            raise Review("PAM postlogin also modifies passwords")
+        sources.append((str(post), data))
+    return sources, stacks
+
+
+def read_dnf(path, text):
+    from dnf.conf import Conf
+
+    parser = configparser.ConfigParser(
+        interpolation=None, strict=True, delimiters=("=",), empty_lines_in_values=False,
+    )
+    lines = text.splitlines(True)
+    try:
+        parser.read_string(text)
+    except configparser.Error:
+        raise Review("DNF main configuration failed strict INI validation")
+    if (parser.sections() != ["main"] or parser.defaults()
+            or {"include", "config_file_path"} & set(parser["main"])):
+        raise Review("DNF uses an unsupported configuration source or section layout")
+    key = "clean_requirements_on_remove"
+    parsed = parser["main"].get(key)
+    records = [
+        (index, match.group(1)) for index, line in enumerate(lines)
+        for match in [re.fullmatch(r"(?i)[ \t]*" + key + r"[ \t]*=[ \t]*([^\s#;=]+)[ \t]*", line.strip("\r\n"))]
+        if match
+    ]
+    if (parsed is None and records or parsed is not None
+            and (len(records) != 1 or records[0][1] != parsed)):
+        raise Review("DNF cleanup policy is not a standalone literal option")
+    native = Conf()
+    native.config_file_path = str(path)
+    try:
+        native.read()
+    except (RuntimeError, OSError):
+        raise Review("the native DNF parser rejected the configuration")
+    if parsed is not None and native.clean_requirements_on_remove != meets(parsed, "True", "true"):
+        raise Review("the native DNF parser disagrees with the declared cleanup setting")
+    return {key: records}
+
+
+def inspect(family, path, original, pam, ids):
+    main = read_file(path)
+    contexts = [(str(original), main)]
+    followers = {}
+    overrides = []
+    tracked = {spec[0] for spec in POLICY[family].values()}
+    if family == "quality":
+        directory = Path(str(original) + ".d")
+        if directory.exists() or directory.is_symlink():
+            controlled(directory, directory=True)
+            dropins = sorted(directory.glob("*.conf"), key=lambda entry: os.fsencode(entry.name))
+            if len(dropins) > 32 or any(not DIRECT_PATH.fullmatch(entry.name) for entry in dropins):
+                raise Review("the password-quality drop-in set is outside the supported precedence layout")
+            for entry in dropins:
+                data = read_file(entry)
+                contexts.append((str(entry), data))
+                for key, occurrences in settings(data, family, tracked | {"enforcing"}).items():
+                    followers.setdefault(key, []).extend(occurrences)
+        active, overrides = read_pam(pam)
+        contexts.extend(active)
+        # The native parser validates the active drop-ins and main file and
+        # independently parses the staged main bytes. The explicit merge below
+        # also includes original drop-ins when evaluating staged candidates.
+        native_pwquality(original)
+        if path != original:
+            native_pwquality(path)
+        current = settings(main, family, tracked | {"enforcing"})
+        enforcement = (followers.get("enforcing", []) + current.get("enforcing", []))
+        configured = enforcement[-1][1] if enforcement else "1"
+        if any(stack.get("enforcing", configured) != "1" for stack in overrides):
+            raise Review("a local PAM password stack is not in password-quality enforcing mode")
+    elif family == "login":
+        current = settings(main, family, tracked)
+    else:
+        current = read_dnf(path, main)
+    selected_keys = {POLICY[family][id][0] for id in ids}
+    evidence = {}
+    for id in ids:
+        key, target, predicate = POLICY[family][id]
+        # libpwquality reads ASCII-sorted drop-ins first, the main file last
+        # and PAM module arguments after all configuration.
+        owned = current.get(key, [])
+        dropins = followers.get(key, [])
+        records = dropins + owned
+        value = records[-1][1] if records else None
+        if len({part for _, part in records}) > 1:
+            evidence[id] = ("FAIL", "conflict", key, "conflicting-sources", target)
+            continue
+        expected = meets(value, target, predicate)
+        configured_length_credits = False
+        fixable_length_credits = False
+        if key == "minlen":
+            for stack in overrides:
+                for credit in ("ucredit", "lcredit", "dcredit", "ocredit"):
+                    configured_credit = followers.get(credit, []) + current.get(credit, [])
+                    credit_value = stack.get(credit, configured_credit[-1][1] if configured_credit else "0")
+                    if not INTEGER.fullmatch(credit_value):
+                        raise Review("a password-length credit cannot be interpreted safely")
+                    if int(credit_value) <= 0:
+                        continue
+                    if (credit not in stack and credit in selected_keys and not followers.get(credit)
+                            and len(current.get(credit, [])) == 1
+                            and all(credit not in other or int(other[credit]) <= -1 for other in overrides)):
+                        fixable_length_credits = True
+                        continue
+                    configured_length_credits = True
+        # Positive length credits can allow passwords shorter than minlen.
+        # Review these jointly with the four character-class checks.
+        override = configured_length_credits or any(
+            key in stack and not meets(stack[key], target, predicate) for stack in overrides
+        )
+        status = "PASS" if expected and not (override or fixable_length_credits) else "FAIL"
+        location = "override" if override else "drop-in" if dropins else "local"
+        if status == "FAIL" and location == "local" and len(owned) > 1:
+            location = "conflict"
+        if key == "UMASK" and value is not None and not expected and int(value, 8) & 0o077 == 0o077:
+            location = "custom-mask"
+        if key == "minlen" and expected and fixable_length_credits and not override:
+            location = "related"
+        evidence[id] = (status, location, key, value if value is not None else "unset", target)
+    digest = hashlib.sha256()
+    support = hashlib.sha256()
+    for name, data in contexts:
+        # Lengths bind contents and keep path/header bytes out of the report.
+        record = name.encode("utf-8") + b"\0" + data.encode("utf-8") + b"\0"
+        digest.update(record)
+        if name != str(original):
+            support.update(record)
+    return main, current, evidence, digest.hexdigest(), support.hexdigest()
+
+
+def render(family, text, current, evidence):
+    lines = text.splitlines(True)
+    newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
+    pending = []
+    for id, (status, location, key, value, target) in evidence.items():
+        if (status, location) == ("FAIL", "related"):
+            continue
+        if (status, location) != ("FAIL", "local"):
+            raise Review("the selected option changed or still has an external configuration override")
+        delimiter = " " if family == "login" else "=" if family == "dnf" else " = "
+        replacement = key + delimiter + target + newline
+        if key in current and current[key]:
+            index = current[key][0][0]
+            original = lines[index].rstrip("\r\n")
+            lines[index] = "# rhel8-stig " + id + " original: " + original + newline + replacement
+        else:
+            pending.append(replacement)
+    if pending:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += newline
+        lines.extend(pending)
+    return "".join(lines)
+
+
+def main():
+    action, family, candidate, original, pam, verify_digest, *ids = sys.argv[1:]
+    path = Path(candidate)
+    original = Path(original)
+    if not ids or any(id not in POLICY[family] for id in ids) or len(ids) != len(set(ids)):
+        raise Review("the rule selection is not supported for this configuration")
+    source, current, evidence, digest, support = inspect(family, path, original, Path(pam), ids)
+    if action == "state":
+        print(digest + "|" + support)
+        for id in ids:
+            print("\t".join((id,) + evidence[id]))
+    elif action == "render":
+        if digest != verify_digest:
+            raise Review("supporting configuration changed while preparing the plan")
+        sys.stdout.buffer.write(render(family, source, current, evidence).encode("utf-8"))
+    elif action == "validate":
+        if support != verify_digest:
+            raise Review("supporting configuration changed since the plan was prepared")
+        if any(row[0] != "PASS" for row in evidence.values()):
+            raise Review("the staged settings do not satisfy the selected local policy")
+        if set(ids) & {"V-230365", "V-230366"}:
+            minimum = current.get("PASS_MIN_DAYS", [])
+            maximum = current.get("PASS_MAX_DAYS", [])
+            for values in (minimum, maximum):
+                if len(values) > 1 or any(not INTEGER.fullmatch(value) for _, value in values):
+                    raise Review("an existing password-aging limit is ambiguous")
+            if minimum and maximum:
+                low, high = int(minimum[0][1]), int(maximum[0][1])
+                if 0 <= high < low:
+                    raise Review("new accounts would expire before their password can be changed")
+    else:
+        raise Review("unsupported account policy operation")
+
+
+try:
+    main()
+except Review as error:
+    # Review text is selected from constants, never configuration contents.
+    print(str(error), file=sys.stderr)
+    sys.exit(2)
+except (OSError, UnicodeError, ValueError, KeyError, ImportError):
+    print("configuration, native parser or PAM source is unavailable", file=sys.stderr)
+    sys.exit(2)
+PY
+}
+
+account_policy_check() {
+    local id=$1 family=$2 path pam state first actual status location key value target
+    path=$(account_policy_path "$family") && pam=$(account_policy_pam_directory) || {
+        rule_result ERROR 'the policy rule has no supported configuration source'; return;
+    }
+    if ! state=$(account_policy_io state "$family" "$path" "$path" "$pam" - "$id" 2>&1); then
+        rule_result NEEDS_REVIEW "$state"; return
+    fi
+    first=${state#*$'\n'}
+    IFS=$'\t' read -r actual status location key value target <<< "$first"
+    [[ $actual == "$id" && $status =~ ^(PASS|FAIL)$ && $key && $target ]] || {
+        rule_result ERROR 'the policy observation could not be interpreted'; return;
+    }
+    case $location in
+        conflict) rule_result FAIL "$key has conflicting explicit settings. Review authoritative sources." ;;
+        override) rule_result FAIL "$key = $value. Effective PAM arguments or length credits need review." ;;
+        custom-mask) rule_result FAIL "$key = $value differs from the benchmark target $target and uses a stricter custom mask." ;;
+        *) rule_result "$status" "$key = $value (benchmark target $target)."
+    esac
+}
+
+account_policy_validate() {
+    local family=$1 candidate=$2 target=$3 pam
+    pam=$(account_policy_pam_directory) || return 1
+    account_policy_io validate "$family" "$candidate" "$target" "$pam" "$ACCOUNT_VALIDATE_SUPPORT" \
+        "${ACCOUNT_VALIDATE_IDS[@]}" >/dev/null
+}
+
+account_quality_validate() { account_policy_validate quality "$@"; }
+account_login_validate() { account_policy_validate login "$@"; }
+account_dnf_validate() { account_policy_validate dnf "$@"; }
+
+account_policy_plan() {
+    local id=$1 family=$2 path pam state hashes hash support actual status location key value target entry
+    local validator draft="$EDIT_TEMP/$id.account-policy" description='' rules='' requirements
+    local -a possible requested=() approved=()
+    case $family in
+        quality)
+            possible=(V-230357 V-230358 V-230359 V-230360 V-230361 V-230362 V-230363 V-230369
+                      V-230375 V-230377 V-251716)
+            validator=account_quality_validate
+            requirements='Confirm local PAM password policy ownership and test a new password on an authorized test account. The plan edits password-quality configuration only.'
+            ;;
+        login)
+            possible=(V-230324 V-230365 V-230366 V-230378 V-230383)
+            validator=account_login_validate
+            requirements='Confirm local login.defs ownership and review console login and new-account defaults. Existing account credentials and aging entries are outside this change.'
+            ;;
+        dnf)
+            possible=(V-230281)
+            validator=account_dnf_validate
+            requirements='Review dependency cleanup during future DNF removals. This changes configuration only and performs no package transaction.'
+            ;;
+        *) return 1 ;;
+    esac
+    path=$(account_policy_path "$family") && pam=$(account_policy_pam_directory) || return 1
+    edit_safe_path "$path" || { edit_fail 'policy target is outside the supported local layout'; return; }
+    for entry in "${possible[@]}"; do
+        [[ ${EFFECTIVE[$entry]+selected} ]] && requested+=("$entry")
+    done
+    if ! state=$(account_policy_io state "$family" "$path" "$path" "$pam" - "${requested[@]}" 2>&1); then
+        edit_fail "$state"; return
+    fi
+    hashes=${state%%$'\n'*}
+    hash=${hashes%|*} support=${hashes#*|}
+    [[ $hash =~ ^[0-9a-f]{64}$ && $support =~ ^[0-9a-f]{64}$ && $state == *$'\n'* ]] || return 1
+    while IFS=$'\t' read -r actual status location key value target; do
+        [[ $status == FAIL && $location =~ ^(local|related)$ ]] || continue
+        approved+=("$actual")
+        if [[ $location == related ]]; then
+            description+="$actual $key stays at $value. The selected character-class settings remove effective length credits."$'\n'
+        else
+            description+="$actual $key: $value -> $target"$'\n'
+        fi
+        if [[ $actual != "$id" ]]; then rules+=" $actual"; fi
+    done <<< "${state#*$'\n'}"
+    if [[ " ${approved[*]} " != *" $id "* ]]; then
+        edit_fail 'the exact directive is already compliant or requires review of another source'; return
+    fi
+    if ! account_policy_io render "$family" "$path" "$path" "$pam" "$hash" "${approved[@]}" > "$draft"; then
+        edit_fail 'the account policy source changed or needs a separate guarded edit'; return
+    fi
+    ACCOUNT_VALIDATE_IDS=("${approved[@]}")
+    ACCOUNT_VALIDATE_SUPPORT=$support
+    EDIT_CONTEXT=$hash
+    EDIT_GROUPED=${rules# }
+    EDIT_RELATED=$EDIT_GROUPED
+    EDIT_REQUIREMENTS=$requirements
+    edit_content "$path" keep "${description%$'\n'}" "$validator" < "$draft"
+}
+
+account_policy_admin() {
+    case $1 in
+        quality)
+            printf '%s\n' 'Review pwquality.conf, ASCII-ordered drop-ins, and any pam_pwquality arguments before correcting the selected setting.' \
+                'Use the authoritative source and a disposable local test account to verify password changes.'
+            ;;
+        login)
+            printf '%s\n' 'Review the selected login.defs directive with the account owner. Use the authoritative local source.' \
+                'Verify behavior on a new local account or a fresh console login, as appropriate.'
+            ;;
+        dnf)
+            printf '%s\n' 'Review the DNF main configuration. Explicit cleanup affects dependencies during future removal transactions.'
+            ;;
+    esac
+}
+
+rule_V_230357_check() { account_policy_check V-230357 quality; }
+rule_V_230358_check() { account_policy_check V-230358 quality; }
+rule_V_230359_check() { account_policy_check V-230359 quality; }
+rule_V_230360_check() { account_policy_check V-230360 quality; }
+rule_V_230361_check() { account_policy_check V-230361 quality; }
+rule_V_230362_check() { account_policy_check V-230362 quality; }
+rule_V_230363_check() { account_policy_check V-230363 quality; }
+rule_V_230369_check() { account_policy_check V-230369 quality; }
+rule_V_230375_check() { account_policy_check V-230375 quality; }
+rule_V_230377_check() { account_policy_check V-230377 quality; }
+rule_V_251716_check() { account_policy_check V-251716 quality; }
+rule_V_230324_check() { account_policy_check V-230324 login; }
+rule_V_230365_check() { account_policy_check V-230365 login; }
+rule_V_230366_check() { account_policy_check V-230366 login; }
+rule_V_230378_check() { account_policy_check V-230378 login; }
+rule_V_230383_check() { account_policy_check V-230383 login; }
+rule_V_230281_check() { account_policy_check V-230281 dnf; }
+
+rule_V_230357_plan() { account_policy_plan V-230357 quality; }
+rule_V_230358_plan() { account_policy_plan V-230358 quality; }
+rule_V_230359_plan() { account_policy_plan V-230359 quality; }
+rule_V_230360_plan() { account_policy_plan V-230360 quality; }
+rule_V_230361_plan() { account_policy_plan V-230361 quality; }
+rule_V_230362_plan() { account_policy_plan V-230362 quality; }
+rule_V_230363_plan() { account_policy_plan V-230363 quality; }
+rule_V_230369_plan() { account_policy_plan V-230369 quality; }
+rule_V_230375_plan() { account_policy_plan V-230375 quality; }
+rule_V_230377_plan() { account_policy_plan V-230377 quality; }
+rule_V_251716_plan() { account_policy_plan V-251716 quality; }
+rule_V_230324_plan() { account_policy_plan V-230324 login; }
+rule_V_230365_plan() { account_policy_plan V-230365 login; }
+rule_V_230366_plan() { account_policy_plan V-230366 login; }
+rule_V_230378_plan() { account_policy_plan V-230378 login; }
+rule_V_230383_plan() { account_policy_plan V-230383 login; }
+rule_V_230281_plan() { account_policy_plan V-230281 dnf; }
+
+rule_V_230357_admin() { account_policy_admin quality; }
+rule_V_230358_admin() { account_policy_admin quality; }
+rule_V_230359_admin() { account_policy_admin quality; }
+rule_V_230360_admin() { account_policy_admin quality; }
+rule_V_230361_admin() { account_policy_admin quality; }
+rule_V_230362_admin() { account_policy_admin quality; }
+rule_V_230363_admin() { account_policy_admin quality; }
+rule_V_230369_admin() { account_policy_admin quality; }
+rule_V_230375_admin() { account_policy_admin quality; }
+rule_V_230377_admin() { account_policy_admin quality; }
+rule_V_251716_admin() { account_policy_admin quality; }
+rule_V_230324_admin() { account_policy_admin login; }
+rule_V_230365_admin() { account_policy_admin login; }
+rule_V_230366_admin() { account_policy_admin login; }
+rule_V_230378_admin() { account_policy_admin login; }
+rule_V_230383_admin() { account_policy_admin login; }
+rule_V_230281_admin() { account_policy_admin dnf; }
+
+# Bounded numeric sysctl and canonical SSH directives for RHEL 8 STIG V2R9.
+# Closed world targets keep preview output and activation instructions precise.
+
+network_sysctl_spec() {
+    case $1 in
+        V-230267) printf 'fs.protected_symlinks 1\n' ;;
+        V-230268) printf 'fs.protected_hardlinks 1\n' ;;
+        V-230269) printf 'kernel.dmesg_restrict 1\n' ;;
+        V-230270) printf 'kernel.perf_event_paranoid 2\n' ;;
+        V-230280) printf 'kernel.randomize_va_space 2\n' ;;
+        V-230535) printf 'net.ipv6.conf.default.accept_redirects 0\n' ;;
+        V-230536) printf 'net.ipv4.conf.all.send_redirects 0\n' ;;
+        V-230537) printf 'net.ipv4.icmp_echo_ignore_broadcasts 1\n' ;;
+        V-230538) printf 'net.ipv6.conf.all.accept_source_route 0\n' ;;
+        V-230539) printf 'net.ipv6.conf.default.accept_source_route 0\n' ;;
+        V-230543) printf 'net.ipv4.conf.default.send_redirects 0\n' ;;
+        V-230544) printf 'net.ipv6.conf.all.accept_redirects 0\n' ;;
+        V-230547) printf 'kernel.kptr_restrict 1\n' ;;
+        V-244550) printf 'net.ipv4.conf.default.accept_redirects 0\n' ;;
+        V-244551) printf 'net.ipv4.conf.all.accept_source_route 0\n' ;;
+        V-244552) printf 'net.ipv4.conf.default.accept_source_route 0\n' ;;
+        V-244553) printf 'net.ipv4.conf.all.accept_redirects 0\n' ;;
+        V-284948) printf 'net.ipv4.conf.all.log_martians 1\n' ;;
+        V-284949) printf 'net.ipv4.conf.default.log_martians 1\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+network_sysctl_path() { printf '/etc/sysctl.d/90-rhel8-stig-%s.conf\n' "$1"; }
+network_sysctl_main() { printf '/etc/sysctl.conf\n'; }
+network_sysctl_locations() {
+    # First directory wins a duplicate filename. /lib may alias /usr/lib.
+    printf '%s\n' /etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d /lib/sysctl.d
+}
+
+network_sysctl_live() {
+    local value
+    value=$(timeout 8 sysctl -n -- "$1" 2>/dev/null) || return 1
+    [[ $value =~ ^-?(0|[1-9][0-9]{0,8})$ ]] || return 1
+    printf '%s\n' "$value"
+}
+
+network_sysctl_ipv6_disabled() {
+    local source value found=0
+    if grep -Eq '(^|[[:space:]])ipv6\.disable=1([[:space:]]|$)' /proc/cmdline 2>/dev/null; then
+        return 0
+    fi
+    [[ -d /proc/sys/net/ipv6/conf ]] || return 1
+    for source in /proc/sys/net/ipv6/conf/*/disable_ipv6; do
+        [[ -r $source ]] && IFS= read -r value < "$source" && [[ $value == 1 ]] || return 1
+        found=1
+    done
+    (( found ))
+}
+
+network_sysctl_protected_path() {
+    local path=$1 owner mode
+    while [[ $path != / ]]; do
+        [[ ! -L $path ]] || return 1
+        read -r owner mode < <(stat -c '%u %a' -- "$path") || return 1
+        [[ $owner == 0 && $mode =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 022) == 0 )) || return 1
+        path=$(dirname -- "$path") || return 1
+    done
+}
+
+network_sysctl_values() {
+    # Output the normalized selector and a scalar, never the original content.
+    awk '
+        /^[[:blank:]]*([#;]|$)/ {next}
+        {
+            line=$0; sub(/\r$/,"",line)
+            sub(/^[[:blank:]]*-?[[:blank:]]*/,"",line)
+            selector=line; sub(/[[:blank:]=].*$/,"",selector); gsub(/\//,".",selector)
+            if (!length(selector)) next
+            if (!sub(/^[^=]*=[[:blank:]]*/,"",line)) line="?"
+            sub(/[[:blank:]]+[#;].*$/,"",line); sub(/[[:blank:]]+$/,"",line)
+            if (line !~ /^-?[0-9]{1,9}$/) line="?"
+            if (selector ~ /^[a-zA-Z0-9_.*?\[\]!^-]+$/) print selector "\t" line
+        }
+    ' "$1"
+}
+
+network_sysctl_scan() {
+    local key=$1 expected=$2 omit=$3 directory canonical path name resolved records selector value
+    local digest context='' result=missing main
+    local -a ordered_paths=()
+    local -A seen_directory=() seen_name=()
+    main=$(network_sysctl_main) || return 1
+    while IFS= read -r directory; do
+        [[ -e $directory || -L $directory ]] || continue
+        canonical=$(realpath -e -- "$directory") || return 1
+        if [[ $canonical != "$directory" && ( $directory != /lib/sysctl.d || $canonical != /usr/lib/sysctl.d ) ]]; then
+            return 1
+        fi
+        [[ -d $canonical ]] && network_sysctl_protected_path "$canonical" || return 1
+        [[ -z ${seen_directory[$canonical]+seen} ]] || continue
+        seen_directory[$canonical]=1
+        for path in "$canonical"/*.conf; do
+            [[ -e $path || -L $path ]] || continue
+            name=${path##*/}
+            if [[ -n $omit && $name == "${omit##*/}" && $path != "$omit" ]]; then return 1; fi
+            [[ -z ${seen_name[$name]+seen} ]] || continue
+            seen_name[$name]=1
+            [[ $path != "$omit" ]] || continue
+            ordered_paths+=("$path")
+        done
+    done < <(network_sysctl_locations)
+    if [[ -e $main || -L $main ]]; then ordered_paths+=("$main"); fi
+    for path in "${ordered_paths[@]}"; do
+        resolved=$path
+        if [[ -L $path ]]; then
+            resolved=$(realpath -e -- "$path") || return 1
+            if [[ $resolved == /dev/null && $path != "$main" ]]; then
+                context+="$path masked"$'\n'
+                continue
+            fi
+            # RHEL commonly links this drop-in to the legacy configuration.
+            [[ $path == /etc/sysctl.d/99-sysctl.conf && $resolved == "$main" ]] || return 1
+        fi
+        network_sysctl_protected_path "$resolved" && text_input_file "$resolved" || return 1
+        digest=$(sha256_file "$resolved") && records=$(network_sysctl_values "$resolved") || return 1
+        context+="$path $digest"$'\n'
+        while IFS=$'\t' read -r selector value; do
+            [[ -n $selector ]] || continue
+            if [[ $selector != "$key" ]]; then
+                # A configured wildcard that can supply this key needs review.
+                # shellcheck disable=SC2053
+                if [[ $key == $selector ]]; then result=ambiguous; fi
+                continue
+            fi
+            case $result:$value in
+                ambiguous:*|*:'?') result=ambiguous ;;
+                *)
+                    if [[ $value != "$expected" ]]; then
+                        result=conflict
+                    elif [[ $result == missing && $path != /run/* ]]; then
+                        result=configured
+                    fi ;;
+            esac
+        done <<< "$records"
+    done
+    digest=$(printf '%s' "$context" | sha256sum) || return 1
+    printf '%s %s\n' "$result" "${digest%% *}"
+}
+
+network_sysctl_stricter() {
+    local key=$1 live=$2 target=$3
+    case $key in
+        kernel.kptr_restrict|kernel.perf_event_paranoid) (( live > target )) ;;
+        net.ipv6.conf.*.accept_source_route) (( live < target )) ;;
+        *) return 1 ;;
+    esac
+}
+
+network_sysctl_check() {
+    local id=$1 spec key target live persisted state
+    spec=$(network_sysctl_spec "$id") || { rule_result ERROR 'Unknown sysctl rule.'; return; }
+    read -r key target <<< "$spec"
+    if [[ $key == net.ipv6.* ]] && network_sysctl_ipv6_disabled; then
+        rule_result NOT_APPLICABLE 'IPv6 is disabled on the host.'
+        return
+    fi
+    if ! live=$(network_sysctl_live "$key") || ! persisted=$(network_sysctl_scan "$key" "$target" ''); then
+        rule_result NEEDS_REVIEW "Could not establish the live and persistent settings for $key."
+        return
+    fi
+    state=${persisted%% *}
+    if network_sysctl_stricter "$key" "$live" "$target"; then
+        rule_result NEEDS_REVIEW "$key is $live, a stricter value than the pinned target $target. Verify policy before any change."
+    elif [[ $state == ambiguous || $state == conflict ]]; then
+        rule_result NEEDS_REVIEW "$key is $live at runtime. Review conflicting or ambiguous persistent definitions."
+    elif [[ $state == configured && $live == "$target" ]]; then
+        rule_result PASS "$key is $target in the running kernel and a persistent source."
+    elif [[ $state == configured ]]; then
+        CHECK_PENDING=1
+        rule_result NEEDS_REVIEW "$key is configured as $target but live at $live. Verify activation."
+    else
+        rule_result FAIL "$key is $live and lacks a verified persistent $target assignment."
+    fi
+}
+
+network_sysctl_safe_role() {
+    case $1 in
+        net.ipv4.*) [[ $(network_sysctl_live net.ipv4.ip_forward) == 0 ]] ;;
+        net.ipv6.*) [[ $(network_sysctl_live net.ipv6.conf.all.forwarding) == 0 ]] ;;
+        *) return 0 ;;
+    esac
+}
+
+network_sysctl_candidate() {
+    local id=$1 key=$2 value=$3
+    printf '# rhel8-stig %s\n%s = %s\n' "$id" "$key" "$value"
+}
+
+network_sysctl_validate() {
+    local observed live expected bytes
+    if [[ $NETWORK_SYSCTL_KEY == net.ipv6.* ]] && network_sysctl_ipv6_disabled; then return 1; fi
+    observed=$(network_sysctl_scan "$NETWORK_SYSCTL_KEY" "$NETWORK_SYSCTL_VALUE" "$2") &&
+        live=$(network_sysctl_live "$NETWORK_SYSCTL_KEY") &&
+        network_sysctl_safe_role "$NETWORK_SYSCTL_KEY" || return 1
+    [[ "$observed $live" == "$EDIT_CONTEXT" ]] || return 1
+    expected=$(network_sysctl_candidate "$NETWORK_SYSCTL_ID" "$NETWORK_SYSCTL_KEY" "$NETWORK_SYSCTL_VALUE" | sha256sum) &&
+        bytes=$(sha256sum < "$1") && [[ $bytes == "$expected" ]]
+}
+
+network_sysctl_plan() {
+    local id=$1 spec key target path source live
+    spec=$(network_sysctl_spec "$id") && path=$(network_sysctl_path "$id") || return 1
+    read -r key target <<< "$spec"
+    if [[ -e $path || -L $path ]]; then edit_fail "Review the existing $path before changing $key"; return; fi
+    if [[ $key == net.ipv6.* ]] && network_sysctl_ipv6_disabled; then
+        edit_fail 'IPv6 is disabled on the host'; return
+    fi
+    if ! live=$(network_sysctl_live "$key") || ! source=$(network_sysctl_scan "$key" "$target" "$path"); then
+        edit_fail "Could not establish the live and persistent sources for $key"; return
+    fi
+    if [[ ${source%% *} != missing ]] || network_sysctl_stricter "$key" "$live" "$target"; then
+        edit_fail "Persistent configuration or a stricter live value for $key needs review"; return
+    fi
+    if ! network_sysctl_safe_role "$key"; then
+        edit_fail 'Review router, forwarding, or managed network policy before staging the setting'; return
+    fi
+    NETWORK_SYSCTL_ID=$id NETWORK_SYSCTL_KEY=$key NETWORK_SYSCTL_VALUE=$target
+    EDIT_CONTEXT="$source $live" EDIT_DISPOSITION=pending
+    EDIT_REQUIREMENTS='Confirm the kernel setting is locally managed and compatible with the host role and dependent services.'
+    EDIT_ACTIVATION="After reviewing impact, activate only $key with sysctl -w $key=$target and recheck the live and persistent values. If restoring the policy after activation, separately restore the prior runtime value $live or use an approved reboot."
+    edit_content "$path" 0644 "Add persistent $key = $target. Live value before activation is $live." \
+        network_sysctl_validate < <(network_sysctl_candidate "$id" "$key" "$target")
+}
+
+network_sysctl_admin() {
+    local spec key target
+    spec=$(network_sysctl_spec "$1") || return 1
+    read -r key target <<< "$spec"
+    printf '%s\n' "Review the authoritative persistent definition and live value for $key. The pinned value is $target." \
+        'Resolve competing definitions at their managed source. Activate only the reviewed setting in an approved window and rerun Status.'
+}
+
+network_ssh_path() { printf '/etc/ssh/sshd_config\n'; }
+
+network_ssh_ids() {
+    printf '%s\n' V-230244 V-230288 V-230290 V-230330 V-230382 V-230556 V-244525
+}
+
+network_ssh_spec() {
+    case $1 in
+        V-230244) printf 'ClientAliveCountMax 1\n' ;;
+        V-230288) printf 'StrictModes yes\n' ;;
+        V-230290) printf 'IgnoreUserKnownHosts yes\n' ;;
+        V-230330) printf 'PermitUserEnvironment no\n' ;;
+        V-230382) printf 'PrintLastLog yes\n' ;;
+        V-230556) printf 'X11UseLocalhost yes\n' ;;
+        V-244525) printf 'ClientAliveInterval 600\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+network_ssh_authority() {
+    local invocation env crypto=/etc/crypto-policies/back-ends/opensshserver.config
+    local resolved backend=absent
+    invocation=$(expanded_sshd_invocation) || return 1
+    env=$(timeout 8 systemctl show sshd.service --no-pager --all -p Environment -p EnvironmentFiles 2>/dev/null) || return 1
+    if ! awk '
+        /^Environment=$/ {empty=1; next}
+        /^EnvironmentFiles=/ {
+            files=1
+            sub(/^EnvironmentFiles=/,"")
+            gsub(/(\/etc\/sysconfig\/sshd|\/etc\/crypto-policies\/back-ends\/opensshserver.config) \(ignore_errors=yes\)/,"")
+            if ($0 !~ /^[[:blank:]]*$/) bad=1
+            next
+        }
+        {bad=1}
+        END {exit !(empty && files && !bad)}
+    ' <<< "$env"; then return 1; fi
+    if [[ -e /etc/sysconfig/sshd || -L /etc/sysconfig/sshd ]]; then
+        network_sysctl_protected_path /etc/sysconfig/sshd && text_input_file /etc/sysconfig/sshd || return 1
+    fi
+    if [[ -e $crypto || -L $crypto ]]; then
+        resolved=$(realpath -e -- "$crypto") || return 1
+        case $resolved in /usr/share/crypto-policies/*|/etc/crypto-policies/*) ;; *) return 1 ;; esac
+        network_sysctl_protected_path "$resolved" && text_input_file "$resolved" || return 1
+        # The environment backend is data. Only allow crypto options here so it
+        # cannot override the directives established with sshd -T.
+        if ! awk '
+            BEGIN {quote=sprintf("%c",39)}
+            /^[[:blank:]]*($|#)/ {next}
+            {
+                line=$0; sub(/^[[:blank:]]*/,"",line)
+                if (++lines>1 || index(line,"CRYPTO_POLICY=" quote)!=1) {bad=1; next}
+                line=substr(line,length("CRYPTO_POLICY=")+2)
+                ending=index(line,quote)
+                if (!ending || substr(line,ending+1) !~ /^[[:blank:]]*(#.*)?$/) {bad=1; next}
+                line=substr(line,1,ending-1); sub(/^[[:blank:]]*/,"",line); sub(/[[:blank:]]*$/,"",line)
+                if (!length(line)) next
+                n=split(line, options, /[[:blank:]]+/)
+                for (i=1; i<=n; i++) {
+                    if (options[i] !~ /^-o(Ciphers|MACs|KexAlgorithms|GSSAPIKexAlgorithms|HostKeyAlgorithms|HostbasedAcceptedAlgorithms|HostbasedAcceptedKeyTypes|PubkeyAcceptedAlgorithms|PubkeyAcceptedKeyTypes|CASignatureAlgorithms|RequiredRSASize)=[a-zA-Z0-9_@.,:+*-]+$/) bad=1
+                }
+            }
+            END {exit bad}
+        ' "$resolved"; then return 1; fi
+        backend=$(sha256_file "$resolved") || return 1
+    fi
+    printf '%s\n' "$invocation" "$env" "$backend" | sha256sum
+}
+
+network_ssh_metric() {
+    local current=$1 target=$2
+    case $target in
+        yes|no) [[ $current =~ ^(yes|no)$ ]] ;;
+        1|600) [[ $current =~ ^(0|[1-9][0-9]{0,8})$ ]] ;;
+        *) return 1 ;;
+    esac
+}
+
+network_ssh_meets() {
+    local current=$1 target=$2
+    network_ssh_metric "$current" "$target" || return 1
+    if [[ $target == 600 ]]; then (( current >= 1 && current <= target )); else [[ $current == "$target" ]]; fi
+}
+
+network_ssh_observe() {
+    local path=$1 keyword=$2 target=$3
+    NETWORK_SSH_SOURCE=$(expanded_ssh_values "$path" "$keyword") &&
+        NETWORK_SSH_LIVE=$(expanded_ssh_effective "$path" "$keyword") &&
+        network_ssh_metric "$NETWORK_SSH_LIVE" "$target" || return 2
+    if [[ -n $NETWORK_SSH_SOURCE ]]; then
+        network_ssh_metric "$NETWORK_SSH_SOURCE" "$target" &&
+            [[ $NETWORK_SSH_SOURCE == "$NETWORK_SSH_LIVE" ]] || return 2
+        network_ssh_meets "$NETWORK_SSH_LIVE" "$target"
+    else
+        return 1
+    fi
+}
+
+network_ssh_check() {
+    local id=$1 spec keyword target path state status=0
+    spec=$(network_ssh_spec "$id") && path=$(network_ssh_path) || { rule_result ERROR 'Unknown SSH rule.'; return; }
+    read -r keyword target <<< "$spec"
+    if ! text_input_file "$path" || [[ $(expanded_ssh_topology "$path") != plain ]] ||
+       ! network_ssh_authority >/dev/null; then
+        rule_result NEEDS_REVIEW "Review the authoritative SSH service configuration and any Include or Match contexts for $keyword."
+        return
+    fi
+    network_ssh_observe "$path" "$keyword" "$target" || status=$?
+    case $status in
+        2) rule_result NEEDS_REVIEW "Could not verify an unambiguous effective $keyword." ; return ;;
+        1) rule_result FAIL "$keyword is absent from the source or the effective value does not meet the pinned rule." ; return ;;
+    esac
+    state=$(expanded_ssh_loaded_state "$path") || {
+        rule_result NEEDS_REVIEW "$keyword is configured as $NETWORK_SSH_LIVE. Verify activation."; return;
+    }
+    case $state in
+        pending) CHECK_PENDING=1; rule_result NEEDS_REVIEW "$keyword is configured as $NETWORK_SSH_LIVE. The active service started before the current file." ;;
+        started|inactive) rule_result PASS "Verified explicit $keyword $NETWORK_SSH_LIVE in the reviewed service configuration." ;;
+        *) rule_result NEEDS_REVIEW "$keyword is configured as $NETWORK_SSH_LIVE. Verify activation." ;;
+    esac
+}
+
+network_ssh_render() {
+    local path=$1 keyword=$2 value=$3 id=$4
+    awk -v keyword="$keyword" -v value="$value" -v id="$id" '
+        /^[[:blank:]]*#/ {print; next}
+        {
+            line=$0; sub(/^[[:blank:]]*/,"",line); split(line, fields, /[[:blank:]=]+/)
+            if (tolower(fields[1]) != tolower(keyword)) {print; next}
+            print "# rhel8-stig " id " original: " line
+            print keyword " " value
+            found=1
+        }
+        END {if (!found) {print ""; print "# rhel8-stig " id; print keyword " " value}}
+    ' "$path"
+}
+
+network_ssh_validate() {
+    local path=$1 id spec keyword target stamp
+    stamp=$(network_ssh_authority) && [[ $stamp == "$EDIT_CONTEXT" ]] &&
+        [[ $(expanded_ssh_topology "$path") == plain ]] &&
+        timeout 12 sshd -t -f "$path" >/dev/null 2>&1 || return 1
+    for id in $NETWORK_SSH_VALIDATE_IDS; do
+        spec=$(network_ssh_spec "$id") || return 1
+        read -r keyword target <<< "$spec"
+        network_ssh_observe "$path" "$keyword" "$target" || return 1
+    done
+}
+
+network_ssh_plan() {
+    local id=$1 other path spec keyword target candidate status prior change value file source
+    local diff='' i=0
+    local -A assessed=() changes=() before=()
+    path=$(network_ssh_path) || return 1
+    if ! text_input_file "$path" || ! edit_safe_path "$path" ||
+       [[ $(expanded_ssh_topology "$path") != plain ]] || ! EDIT_CONTEXT=$(network_ssh_authority); then
+        edit_fail 'SSH staging requires the standard root-controlled service and an unscoped local configuration'; return
+    fi
+    for other in $(network_ssh_ids); do
+        spec=$(network_ssh_spec "$other") || return 1
+        read -r keyword target <<< "$spec"
+        status=0
+        network_ssh_observe "$path" "$keyword" "$target" || status=$?
+        assessed[$other]=$status
+        if [[ $status == 1 && ( $other == "$id" || ${EFFECTIVE[$other]+selected} ) ]]; then
+            value=$target
+            if network_ssh_meets "$NETWORK_SSH_LIVE" "$target"; then value=$NETWORK_SSH_LIVE; fi
+            changes[$other]=$value
+            before[$other]=$NETWORK_SSH_SOURCE
+        fi
+    done
+    # A lone keepalive edit on a noncompliant pair would not establish the
+    # required timeout. Group selected peers or keep the pair out of the edit.
+    for other in V-230244 V-244525; do
+        if [[ $other == V-230244 ]]; then candidate=V-244525; else candidate=V-230244; fi
+        if [[ ${assessed[$candidate]} != 0 && ! ${changes[$candidate]+planned} ]]; then
+            unset 'changes[$other]'
+        fi
+    done
+    if [[ -z ${changes[$id]+planned} ]]; then
+        edit_fail 'No unambiguous SSH change is available. For keepalive timing, select both failing counterpart IDs.'; return
+    fi
+    NETWORK_SSH_VALIDATE_IDS='' source=$path
+    for other in $(network_ssh_ids); do
+        [[ ${changes[$other]+planned} ]] || continue
+        spec=$(network_ssh_spec "$other") || return 1
+        read -r keyword target <<< "$spec"
+        file="$EDIT_TEMP/ssh-$((++i)).conf"
+        network_ssh_render "$source" "$keyword" "${changes[$other]}" "$other" > "$file" || return 1
+        source=$file
+        prior=${before[$other]}
+        if [[ $prior ]]; then change="- $keyword $prior"; else change="- $keyword unset"; fi
+        diff+="${diff:+$'\n'}$change"$'\n'"+ $keyword ${changes[$other]} ($other)"
+        NETWORK_SSH_VALIDATE_IDS+="${NETWORK_SSH_VALIDATE_IDS:+ }$other"
+        if [[ $other != "$id" ]]; then EDIT_RELATED+="${EDIT_RELATED:+ }$other"; fi
+    done
+    EDIT_GROUPED=$EDIT_RELATED
+    if [[ ${changes[V-230244]+planned} || ${changes[V-244525]+planned} ]]; then
+        NETWORK_SSH_VALIDATE_IDS+=' V-230244 V-244525'
+    fi
+    EDIT_DISPOSITION=pending
+    EDIT_REQUIREMENTS='Confirm local SSH ownership, approved access and environment use, a separate administrative session, and console recovery.'
+    EDIT_ACTIVATION='Validate with sshd -t and use the separately approved SSH restart procedure. Verify a fresh authorized administrative login and the intended settings.'
+    edit_content "$path" keep "$diff" network_ssh_validate < "$source"
+}
+
+network_ssh_admin() {
+    local spec keyword target
+    spec=$(network_ssh_spec "$1") || return 1
+    read -r keyword target <<< "$spec"
+    printf '%s\n' "Review $keyword in the authoritative SSH configuration. The pinned target is $target." \
+        'For ClientAliveInterval, a positive value at or below 600 is allowed. Review ClientAliveInterval and ClientAliveCountMax together.' \
+        'Inspect service overrides and scoped Include or Match blocks. Validate with sshd -t, keep console access, and verify a fresh login after separate activation approval.'
+}
+
+rule_V_230267_check() { network_sysctl_check V-230267; }
+rule_V_230267_plan() { network_sysctl_plan V-230267; }
+rule_V_230267_admin() { network_sysctl_admin V-230267; }
+rule_V_230268_check() { network_sysctl_check V-230268; }
+rule_V_230268_plan() { network_sysctl_plan V-230268; }
+rule_V_230268_admin() { network_sysctl_admin V-230268; }
+rule_V_230269_check() { network_sysctl_check V-230269; }
+rule_V_230269_plan() { network_sysctl_plan V-230269; }
+rule_V_230269_admin() { network_sysctl_admin V-230269; }
+rule_V_230270_check() { network_sysctl_check V-230270; }
+rule_V_230270_plan() { network_sysctl_plan V-230270; }
+rule_V_230270_admin() { network_sysctl_admin V-230270; }
+rule_V_230280_check() { network_sysctl_check V-230280; }
+rule_V_230280_plan() { network_sysctl_plan V-230280; }
+rule_V_230280_admin() { network_sysctl_admin V-230280; }
+rule_V_230535_check() { network_sysctl_check V-230535; }
+rule_V_230535_plan() { network_sysctl_plan V-230535; }
+rule_V_230535_admin() { network_sysctl_admin V-230535; }
+rule_V_230536_check() { network_sysctl_check V-230536; }
+rule_V_230536_plan() { network_sysctl_plan V-230536; }
+rule_V_230536_admin() { network_sysctl_admin V-230536; }
+rule_V_230537_check() { network_sysctl_check V-230537; }
+rule_V_230537_plan() { network_sysctl_plan V-230537; }
+rule_V_230537_admin() { network_sysctl_admin V-230537; }
+rule_V_230538_check() { network_sysctl_check V-230538; }
+rule_V_230538_plan() { network_sysctl_plan V-230538; }
+rule_V_230538_admin() { network_sysctl_admin V-230538; }
+rule_V_230539_check() { network_sysctl_check V-230539; }
+rule_V_230539_plan() { network_sysctl_plan V-230539; }
+rule_V_230539_admin() { network_sysctl_admin V-230539; }
+rule_V_230543_check() { network_sysctl_check V-230543; }
+rule_V_230543_plan() { network_sysctl_plan V-230543; }
+rule_V_230543_admin() { network_sysctl_admin V-230543; }
+rule_V_230544_check() { network_sysctl_check V-230544; }
+rule_V_230544_plan() { network_sysctl_plan V-230544; }
+rule_V_230544_admin() { network_sysctl_admin V-230544; }
+rule_V_230547_check() { network_sysctl_check V-230547; }
+rule_V_230547_plan() { network_sysctl_plan V-230547; }
+rule_V_230547_admin() { network_sysctl_admin V-230547; }
+rule_V_244550_check() { network_sysctl_check V-244550; }
+rule_V_244550_plan() { network_sysctl_plan V-244550; }
+rule_V_244550_admin() { network_sysctl_admin V-244550; }
+rule_V_244551_check() { network_sysctl_check V-244551; }
+rule_V_244551_plan() { network_sysctl_plan V-244551; }
+rule_V_244551_admin() { network_sysctl_admin V-244551; }
+rule_V_244552_check() { network_sysctl_check V-244552; }
+rule_V_244552_plan() { network_sysctl_plan V-244552; }
+rule_V_244552_admin() { network_sysctl_admin V-244552; }
+rule_V_244553_check() { network_sysctl_check V-244553; }
+rule_V_244553_plan() { network_sysctl_plan V-244553; }
+rule_V_244553_admin() { network_sysctl_admin V-244553; }
+rule_V_284948_check() { network_sysctl_check V-284948; }
+rule_V_284948_plan() { network_sysctl_plan V-284948; }
+rule_V_284948_admin() { network_sysctl_admin V-284948; }
+rule_V_284949_check() { network_sysctl_check V-284949; }
+rule_V_284949_plan() { network_sysctl_plan V-284949; }
+rule_V_284949_admin() { network_sysctl_admin V-284949; }
+
+rule_V_230244_check() { network_ssh_check V-230244; }
+rule_V_230244_plan() { network_ssh_plan V-230244; }
+rule_V_230244_admin() { network_ssh_admin V-230244; }
+rule_V_230288_check() { network_ssh_check V-230288; }
+rule_V_230288_plan() { network_ssh_plan V-230288; }
+rule_V_230288_admin() { network_ssh_admin V-230288; }
+rule_V_230290_check() { network_ssh_check V-230290; }
+rule_V_230290_plan() { network_ssh_plan V-230290; }
+rule_V_230290_admin() { network_ssh_admin V-230290; }
+rule_V_230330_check() { network_ssh_check V-230330; }
+rule_V_230330_plan() { network_ssh_plan V-230330; }
+rule_V_230330_admin() { network_ssh_admin V-230330; }
+rule_V_230382_check() { network_ssh_check V-230382; }
+rule_V_230382_plan() { network_ssh_plan V-230382; }
+rule_V_230382_admin() { network_ssh_admin V-230382; }
+rule_V_230556_check() { network_ssh_check V-230556; }
+rule_V_230556_plan() { network_ssh_plan V-230556; }
+rule_V_230556_admin() { network_ssh_admin V-230556; }
+rule_V_244525_check() { network_ssh_check V-244525; }
+rule_V_244525_plan() { network_ssh_plan V-244525; }
+rule_V_244525_admin() { network_ssh_admin V-244525; }
+
+# Identity and execution audit coverage. Keep rule staging separate from
+# activation. The shared transaction owns backups and conditional rollback.
+
+expansion_audit_spec() {
+    case $1 in
+        V-230404) printf '%s\n' 'watch /etc/shadow identity' ;;
+        V-230405) printf '%s\n' 'watch /etc/security/opasswd identity' ;;
+        V-230406) printf '%s\n' 'watch /etc/passwd identity' ;;
+        V-230407) printf '%s\n' 'watch /etc/gshadow identity' ;;
+        V-230408) printf '%s\n' 'watch /etc/group identity' ;;
+        V-230409) printf '%s\n' 'watch /etc/sudoers identity' ;;
+        V-230410) printf '%s\n' 'watch /etc/sudoers.d identity' ;;
+        V-230412) printf '%s\n' 'exec /usr/bin/su privileged-priv_change' ;;
+        V-230418) printf '%s\n' 'exec /usr/bin/chage privileged-chage' ;;
+        V-230419) printf '%s\n' 'exec /usr/bin/chcon perm_mod' ;;
+        V-230421) printf '%s\n' 'exec /usr/bin/ssh-agent privileged-ssh' ;;
+        V-230422) printf '%s\n' 'exec /usr/bin/passwd privileged-passwd' ;;
+        V-230423) printf '%s\n' 'exec /usr/bin/mount privileged-mount' ;;
+        V-230424) printf '%s\n' 'exec /usr/bin/umount privileged-mount' ;;
+        V-230426) printf '%s\n' 'exec /usr/sbin/unix_update privileged-unix-update' ;;
+        V-230427) printf '%s\n' 'exec /usr/sbin/postdrop privileged-unix-update' ;;
+        V-230428) printf '%s\n' 'exec /usr/sbin/postqueue privileged-unix-update' ;;
+        V-230429) printf '%s\n' 'exec /usr/sbin/semanage privileged-unix-update' ;;
+        V-230430) printf '%s\n' 'exec /usr/sbin/setfiles privileged-unix-update' ;;
+        V-230431) printf '%s\n' 'exec /usr/sbin/userhelper privileged-unix-update' ;;
+        V-230432) printf '%s\n' 'exec /usr/sbin/setsebool privileged-unix-update' ;;
+        V-230433) printf '%s\n' 'exec /usr/sbin/unix_chkpwd privileged-unix-update' ;;
+        V-230434) printf '%s\n' 'exec /usr/libexec/openssh/ssh-keysign privileged-ssh' ;;
+        V-230435) printf '%s\n' 'exec /usr/bin/setfacl perm_mod' ;;
+        V-230436) printf '%s\n' 'exec /usr/sbin/pam_timestamp_check privileged-pam_timestamp_check' ;;
+        V-230437) printf '%s\n' 'exec /usr/bin/newgrp priv_cmd' ;;
+        V-230444) printf '%s\n' 'exec /usr/bin/gpasswd privileged-gpasswd' ;;
+        V-230447) printf '%s\n' 'exec /usr/bin/crontab privileged-crontab' ;;
+        V-230448) printf '%s\n' 'exec /usr/bin/chsh priv_cmd' ;;
+        V-230462) printf '%s\n' 'exec /usr/bin/sudo priv_cmd' ;;
+        V-230463) printf '%s\n' 'exec /usr/sbin/usermod privileged-usermod' ;;
+        V-230464) printf '%s\n' 'exec /usr/bin/chacl perm_mod' ;;
+        V-230465) printf '%s\n' 'exec /usr/bin/kmod modules' ;;
+        V-230467) printf '%s\n' 'watch /var/log/lastlog logins' ;;
+        *) return 1 ;;
+    esac
+}
+
+expansion_audit_payload() {
+    local kind path key
+    read -r kind path key < <(expansion_audit_spec "$1") || return 1
+    if [[ $kind == watch ]]; then
+        if [[ $1 == V-230410 ]]; then path+=/; fi
+        printf '%s\n' "-w $path -p wa -k $key"
+    else
+        printf '%s\n' "-a always,exit -F path=$path -F perm=x -F auid>=1000 -F auid!=unset -k $key"
+    fi
+}
+
+# Recognize the reviewed watch and execution forms, including the kernel's
+# aliases for an unset login UID and key syntax. Ambiguous coverage goes to
+# review. Treat suppressions and late deletes conservatively.
+expansion_audit_rule_state() {
+    local kind=$1 path=$2 key=$3
+    awk -v kind="$kind" -v target="$path" -v key="$key" '
+        function atom(flag, arg, parts) {
+            if (flag == "-A") flag="-a"
+            if (flag == "-a" && split(arg, parts, ",")==2) {
+                if (parts[1] == "exit" || parts[1] == "task" || parts[1] == "exclude") {
+                    arg=parts[2] "," parts[1]
+                }
+            }
+            if (flag == "-F" && arg ~ /^key=/) {flag="-k"; sub(/^key=/,"",arg)}
+            if (flag == "-F" && arg ~ /^auid!=(-1|4294967295)$/) arg="auid!=unset"
+            if (flag == "-w" && arg != "/") sub(/\/+$/,"",arg)
+            if (flag == "-p" && arg == "aw") arg="wa"
+            return flag " " arg
+        }
+        function touches(path, field, cleaned) {
+            cleaned=path
+            sub(/\/+$/,"",cleaned)
+            if (kind=="exec" && cleaned ~ /^\/(sbin|bin)\//) cleaned="/usr" cleaned
+            if (cleaned == target) return 1
+            if (target=="/etc/sudoers.d" && index(cleaned,target "/")==1) return 1
+            return (field == "-w" || field == "dir") &&
+                (cleaned == "" || index(target, cleaned "/")==1)
+        }
+        /^[[:space:]]*#/ {next}
+        {
+            sub(/[[:space:]]+#.*/,"")
+            if (NF==0 || ($1=="No" && $2=="rules")) next
+            if ($1=="-D") {
+                if (NF!=1 || seen_action || seen_delete) uncertain=1
+                seen_delete=1
+                next
+            }
+            if ($1=="-q" || $1=="-t") uncertain=1
+            delete tokens
+            n=0; extra=0; overlap=0; saw_syscalls=0
+            for (i=1; i<=NF; i++) {
+                flag=$i
+                if (flag !~ /^-(a|A|F|k|p|w|S)$/ || i==NF) {extra=1; continue}
+                arg=$(++i)
+                if (flag=="-a" || flag=="-A" || flag=="-w") seen_action=1
+                if ((flag=="-a" || flag=="-A") && arg ~ /(^never,|,never$|^exclude,|,exclude$)/) uncertain=1
+                if ((flag=="-w" && touches(arg,flag)) ||
+                    (flag=="-F" && arg ~ /^(path|dir|exe)=/ &&
+                     touches(substr(arg,index(arg,"=")+1),substr(arg,1,index(arg,"=")-1)))) overlap=1
+                if (flag=="-S" && arg=="all" && kind=="exec" && !saw_syscalls++) continue
+                a=atom(flag,arg)
+                if (a in tokens) extra=1
+                tokens[a]=1
+                n++
+            }
+            if (!overlap) next
+            if (!extra && kind=="watch" && n==3 && tokens["-w " target] &&
+                tokens["-p wa"] && tokens["-k " key]) found++
+            else if (!extra && kind=="exec" && n==6 && tokens["-a always,exit"] &&
+                tokens["-F path=" target] && tokens["-F perm=x"] &&
+                tokens["-F auid>=1000"] && tokens["-F auid!=unset"] &&
+                tokens["-k " key]) found++
+            else ambiguous=1
+        }
+        END {
+            if (uncertain || ambiguous || found>1) print "review"
+            else if (found==1) print "present"
+            else print "missing"
+        }'
+}
+
+expansion_audit_watched_object() {
+    local kind=$1 path=$2 canonical metadata owner mode
+    canonical=$(realpath -e -- "$path" 2>/dev/null) || return 1
+    [[ $canonical == "$path" && ! -L $path ]] && local_filesystem "$path" || return 1
+    if [[ $kind == exec ]]; then
+        [[ -f $path && -x $path ]] || return 1
+    elif [[ $path == /etc/sudoers.d ]]; then
+        [[ -d $path ]] || return 1
+    else
+        [[ -f $path ]] || return 1
+    fi
+    metadata=$(stat -c '%u %a' -- "$path" 2>/dev/null) || return 1
+    read -r owner mode <<< "$metadata"
+    [[ $owner == 0 && $mode =~ ^[0-7]{1,4}$ ]] && (( (8#$mode & 022) == 0 ))
+}
+
+expansion_audit_loader() {
+    local unit line post='' pattern='^ExecStartPost=\{[[:space:]]+path=(/usr)?/sbin/augenrules[[:space:]]+;[[:space:]]+argv\[\]=(/usr)?/sbin/augenrules[[:space:]]+--load[[:space:]]+;'
+    unit=$(timeout 8 systemctl show auditd.service -p LoadState -p ActiveState -p FragmentPath \
+        -p DropInPaths -p ExecStartPost 2>/dev/null) || return 1
+    grep -Fxq 'LoadState=loaded' <<< "$unit" &&
+        grep -Fxq 'ActiveState=active' <<< "$unit" &&
+        grep -Fxq 'FragmentPath=/usr/lib/systemd/system/auditd.service' <<< "$unit" &&
+        grep -Fxq 'DropInPaths=' <<< "$unit" || return 1
+    while IFS= read -r line; do
+        if [[ $line == ExecStartPost=* ]]; then
+            [[ ! $post ]] || return 1
+            post=$line
+        fi
+    done <<< "$unit"
+    [[ $post =~ $pattern && $post != *'} {'* ]] || return 1
+    printf '%s\n' "$unit"
+}
+
+expansion_audit_managed() {
+    grep -Eiq '^[[:space:]]*#.*(ansible managed|managed by[[:space:]]+(ansible|puppet|chef|salt|ignition|cloud-init)|generated by[[:space:]]+(ansible|puppet|chef|salt|ignition|cloud-init)|do not edit|do not modify)' <<< "$1"
+}
+
+expansion_audit_kernel_status() {
+    timeout 8 auditctl -s 2>/dev/null | awk '
+        $1=="enabled" {count++; value=$2}
+        END {if (count!=1 || value !~ /^[012]$/) exit 1; print value}'
+}
+
+expansion_audit_generated_rules() {
+    local path=/etc/audit/audit.rules
+    [[ ! -L $path ]] && text_input_file "$path" || return 1
+    cat -- "$path"
+}
+
+expansion_audit_check_rule() {
+    local kind path key source_names source generated active source_state generated_state active_state enabled
+    read -r kind path key < <(expansion_audit_spec "$1") || return 1
+    if ! have_tools auditctl systemctl awk realpath stat findmnt; then
+        rule_result NEEDS_REVIEW 'Audit rule assessment requires the standard local audit, systemd and filesystem tools.'
+        return
+    fi
+    if ! expansion_audit_watched_object "$kind" "$path"; then
+        rule_result NEEDS_REVIEW "The referenced object is absent, linked or outside the trusted local layout ($path). Review applicability and the effective path."
+        return
+    fi
+    if ! enabled=$(expansion_audit_kernel_status); then
+        rule_result NEEDS_REVIEW 'The effective kernel audit state could not be read.'
+        return
+    elif [[ $enabled == 0 ]]; then
+        rule_result FAIL 'Kernel auditing is disabled. Restore the approved audit service and reassess.'
+        return
+    fi
+    if ! expansion_audit_loader >/dev/null ||
+       ! source_names=$(audit_rule_source_inventory) ||
+       ! source=$(audit_rule_source_contents <<< "$source_names") ||
+       ! generated=$(expansion_audit_generated_rules); then
+        rule_result NEEDS_REVIEW 'The standard augenrules source or generated audit rules could not be verified.'
+        return
+    fi
+    if ! active=$(active_audit_rules); then
+        rule_result NEEDS_REVIEW 'The active audit rules could not be read.'
+        return
+    fi
+    source_state=$(expansion_audit_rule_state "$kind" "$path" "$key" <<< "$source") &&
+        generated_state=$(expansion_audit_rule_state "$kind" "$path" "$key" <<< "$generated") &&
+        active_state=$(expansion_audit_rule_state "$kind" "$path" "$key" <<< "$active") || return 1
+    case $source_state:$generated_state:$active_state in
+        *review*) rule_result NEEDS_REVIEW "Audit rules overlap $path, contain duplicates, or include suppressions or deletes. Review the effective policy." ;;
+        present:present:present) rule_result PASS "The required audit rule for $path is present in the authoritative source, generated rules and loaded rules." ;;
+        present:*)
+            CHECK_PENDING=1
+            rule_result NEEDS_REVIEW "The source contains the required audit rule for $path. Approved activation and active verification remain."
+            ;;
+        missing:*) rule_result FAIL "The authoritative audit source lacks the required rule for $path." ;;
+        *) return 1 ;;
+    esac
+}
+
+expansion_audit_validate_dropin() {
+    local candidate=$1 target=$2 id=${2##*/} expected digest
+    [[ $target =~ ^/etc/audit/rules\.d/90-rhel8-stig-v[0-9]+\.rules$ ]] || return 1
+    id=${id#90-rhel8-stig-v}
+    id=V-${id%.rules}
+    expected=$(expansion_audit_payload "$id") || return 1
+    digest=$(printf '%s\n' "$expected" | sha256sum) || return 1
+    [[ $(sha256_file "$candidate") == "${digest%% *}" ]]
+}
+
+expansion_audit_plan_rule() {
+    local id=$1 kind path key unit enabled names source generated active target payload object_id source_state generated_state active_state
+    read -r kind path key < <(expansion_audit_spec "$id") || return 1
+    target=/etc/audit/rules.d/90-rhel8-stig-v${id#V-}.rules
+    if ! have_tools systemctl auditctl augenrules || ! unit=$(expansion_audit_loader) ||
+       ! enabled=$(expansion_audit_kernel_status) || [[ $enabled != 1 && $enabled != 2 ]]; then
+        edit_fail 'the stock active auditd and augenrules configuration could not be verified'; return
+    fi
+    if ! expansion_audit_watched_object "$kind" "$path" ||
+       ! object_id=$(stat -c '%d:%i:%u:%g:%a' -- "$path" 2>/dev/null); then
+        edit_fail 'the referenced audit object is unavailable or outside the trusted local layout'; return
+    fi
+    if ! names=$(audit_rule_source_inventory) || ! source=$(audit_rule_source_contents <<< "$names") ||
+       ! generated=$(expansion_audit_generated_rules) || ! active=$(active_audit_rules); then
+        edit_fail 'the trusted source, generated rules or loaded audit policy could not be read'; return
+    fi
+    if expansion_audit_managed "$source"; then
+        edit_fail 'audit rules appear to be managed by an external configuration source'; return
+    fi
+    source_state=$(expansion_audit_rule_state "$kind" "$path" "$key" <<< "$source") &&
+        generated_state=$(expansion_audit_rule_state "$kind" "$path" "$key" <<< "$generated") &&
+        active_state=$(expansion_audit_rule_state "$kind" "$path" "$key" <<< "$active") || return 1
+    if [[ $source_state != missing || $generated_state == review || $active_state == review ]]; then
+        edit_fail 'the source already covers this finding or audit rules may overlap or suppress it'; return
+    fi
+    if [[ -e $target || -L $target ]]; then
+        edit_fail 'the dedicated rules source already exists and requires review'; return
+    fi
+    payload=$(expansion_audit_payload "$id") || return 1
+    EDIT_CONTEXT=$(printf '%s\0' "$unit" "$enabled" "$object_id" "$names" "$source" "$generated" "$active" |
+        sha256sum) || return 1
+    EDIT_DISPOSITION=pending
+    EDIT_REQUIREMENTS='Confirm this audit rules source is locally managed and the new events are authorized. Consider log capacity.'
+    if [[ $enabled == 2 ]]; then
+        EDIT_ACTIVATION='The live audit policy is immutable. Review the complete queued policy, schedule an approved reboot, and verify generated and loaded rules.'
+    else
+        EDIT_ACTIVATION='Have the audit owner review the complete queued rules source, activate via approved augenrules loading, and verify generated and loaded rules.'
+    fi
+    edit_content "$target" 0600 "+ $payload" expansion_audit_validate_dropin <<< "$payload"
+}
+
+expansion_audit_admin_rule() {
+    local kind path key
+    read -r kind path key < <(expansion_audit_spec "$1") || return 1
+    printf '%s\n' \
+        "Confirm the applicability of $path and identify the authoritative audit rules source." \
+        "Review the required $kind rule with key $key and check for overriding or duplicate rules." \
+        'Review the complete queued policy and schedule any applicable activation or reboot separately.' \
+        'Verify the generated configuration and loaded policy after activation.'
+}
+
+# Audit daemons keep these settings in their own configuration rather than
+# the rule list. A staged change remains pending until the standard daemon
+# starts after the configuration was written.
+expansion_audit_config_spec() {
+    case $1 in
+        V-230393) printf '%s\n' 'local_events yes' ;;
+        V-230395) printf '%s\n' 'log_format ENRICHED' ;;
+        *) return 1 ;;
+    esac
+}
+
+expansion_audit_config_observe() {
+    local key=$1 path=$2 value
+    value=$(audit_setting "$key" < "$path") || return $?
+    case $key:${value,,} in
+        local_events:yes|local_events:no|log_format:enriched|log_format:raw) printf '%s\n' "$value" ;;
+        *) return 2 ;;
+    esac
+}
+
+expansion_audit_daemon_started() {
+    local log timestamp started
+    expansion_audit_loader >/dev/null &&
+        log=$(audit_log_object file) &&
+        audit_writer_context "$log" >/dev/null || return 1
+    timestamp=$(timeout 8 systemctl show auditd.service -p ExecMainStartTimestamp --value 2>/dev/null) ||
+        return 1
+    started=$(LC_ALL=C date -d "$timestamp" +%s 2>/dev/null) || return 1
+    [[ $started =~ ^[1-9][0-9]*$ ]] || return 1
+    printf '%s\n' "$started"
+}
+
+expansion_audit_check_config() {
+    local key required_setting observed_value rc modified started audit_conf=/etc/audit/auditd.conf
+    read -r key required_setting < <(expansion_audit_config_spec "$1") || return 1
+    if [[ -L $audit_conf ]] || ! text_input_file "$audit_conf"; then
+        rule_result NEEDS_REVIEW 'The standard auditd configuration is unavailable or ambiguous.'
+        return
+    fi
+    observed_value=$(expansion_audit_config_observe "$key" "$audit_conf")
+    rc=$?
+    if (( rc > 1 )); then
+        rule_result NEEDS_REVIEW "The auditd $key setting is duplicated or unrecognized."
+        return
+    elif [[ ${observed_value,,} != "${required_setting,,}" ]]; then
+        rule_result FAIL "The standard auditd configuration does not explicitly set $key to $required_setting."
+        return
+    fi
+    if ! started=$(expansion_audit_daemon_started) ||
+       ! modified=$(stat -c '%Y' -- "$audit_conf") ||
+       [[ ! $modified =~ ^[0-9]+$ ]]; then
+        rule_result NEEDS_REVIEW "$key is configured as $required_setting. The standard running audit daemon and activation could not be verified."
+    elif (( modified >= started )); then
+        CHECK_PENDING=1
+        rule_result NEEDS_REVIEW "$key is configured as $required_setting. Verify activation because the file is as recent as or newer than the last observed daemon start."
+    else
+        rule_result PASS "$key is configured as $required_setting and the standard audit daemon started after the configuration was written."
+    fi
+}
+
+expansion_audit_config_render() {
+    local source=$1 key=$2 value=$3 id=$4
+    awk -v key="$key" -v value="$value" -v id="$id" '
+        /^[[:space:]]*#/ {print; next}
+        tolower($0) ~ ("^[[:space:]]*" key "[[:blank:]]+=[[:blank:]]+") {
+            print "# rhel8-stig replaced " key " for " id
+            print key " = " value
+            replaced++
+            next
+        }
+        {print}
+        END {
+            if (replaced>1) exit 1
+            if (!replaced) {
+                print "# rhel8-stig " id
+                print key " = " value
+            }
+        }' "$source"
+}
+
+expansion_audit_config_validate() {
+    local candidate=$1 target=$2 chosen_id=$3 id key required_setting observed_value
+    [[ $target == /etc/audit/auditd.conf ]] || return 1
+    for id in "$chosen_id" $EDIT_GROUPED; do
+        read -r key required_setting < <(expansion_audit_config_spec "$id") || return 1
+        observed_value=$(expansion_audit_config_observe "$key" "$candidate") || return 1
+        [[ $observed_value == "$required_setting" ]] || return 1
+    done
+}
+
+expansion_audit_validate_local() { expansion_audit_config_validate "$1" "$2" V-230393; }
+expansion_audit_validate_enriched() { expansion_audit_config_validate "$1" "$2" V-230395; }
+
+expansion_audit_plan_config() {
+    local chosen_id=$1 sibling validator id input draft observed_value rc key required_setting context unit
+    local audit_conf=/etc/audit/auditd.conf preview='' contents log
+    if [[ $chosen_id == V-230393 ]]; then
+        sibling=V-230395 validator=expansion_audit_validate_local
+    else
+        sibling=V-230393 validator=expansion_audit_validate_enriched
+    fi
+    if ! attended_policy_source "$audit_conf" ||
+       ! unit=$(expansion_audit_loader) ||
+       ! log=$(audit_log_object file) ||
+       ! context=$(audit_writer_context "$log") ||
+       ! contents=$(< "$audit_conf"); then
+        edit_fail 'the root-controlled auditd configuration and its standard running writer could not be proven'; return
+    fi
+    if expansion_audit_managed "$contents"; then
+        edit_fail 'auditd.conf appears to be managed by an external configuration source'; return
+    fi
+    input=$audit_conf
+    for id in "$chosen_id" "$sibling"; do
+        if [[ $id != "$chosen_id" && ! ${EFFECTIVE[$id]+selected} ]]; then continue; fi
+        read -r key required_setting < <(expansion_audit_config_spec "$id") || return 1
+        observed_value=$(expansion_audit_config_observe "$key" "$input")
+        rc=$?
+        if (( rc > 1 )); then
+            edit_fail "the auditd $key definition is duplicated or unrecognized"; return
+        fi
+        if [[ ${observed_value,,} == "${required_setting,,}" ]]; then
+            if [[ $id == "$chosen_id" ]]; then edit_fail 'the audit setting already has the required value'; return; fi
+            continue
+        fi
+        draft=$EDIT_TEMP/auditd-$id.conf
+        expansion_audit_config_render "$input" "$key" "$required_setting" "$id" > "$draft" || return 1
+        input=$draft
+        if [[ $observed_value ]]; then preview+="- $key = $observed_value"$'\n'; fi
+        preview+="+ $key = $required_setting"$'\n'
+        if [[ $id != "$chosen_id" ]]; then EDIT_RELATED=$id EDIT_GROUPED=$id; fi
+    done
+    EDIT_CONTEXT=$(printf '%s\0' "$unit" "$context" "$contents" | sha256sum) || return 1
+    EDIT_DISPOSITION=pending
+    EDIT_REQUIREMENTS='Confirm local audit collection, storage capacity and that downstream tools accept any proposed output format.'
+    EDIT_ACTIVATION='Review all pending audit changes, then arrange an approved audit daemon restart. Verify local audit events and downstream ingestion.'
+    edit_content "$audit_conf" keep "${preview%$'\n'}" "$validator" < "$input"
+}
+
+rule_V_230393_check() { expansion_audit_check_config V-230393; }
+rule_V_230395_check() { expansion_audit_check_config V-230395; }
+rule_V_230393_plan() { expansion_audit_plan_config V-230393; }
+rule_V_230395_plan() { expansion_audit_plan_config V-230395; }
+
+rule_V_230393_admin() {
+    printf '%s\n' \
+        'Confirm the host is intended to collect local audit events and identify the authoritative auditd configuration.' \
+        'Set local_events = yes. In the approved window restart the audit daemon and confirm representative local events.'
+}
+
+rule_V_230395_admin() {
+    printf '%s\n' \
+        'Confirm downstream audit clients can read enriched records and identify the authoritative auditd configuration.' \
+        'Set log_format = ENRICHED. In the approved window restart auditd and verify enriched records and downstream ingestion.'
+}
+
+expansion_audit_tool_paths() {
+    printf '%s\n' /usr/sbin/auditctl /usr/sbin/aureport /usr/sbin/ausearch \
+        /usr/sbin/autrace /usr/sbin/auditd /usr/sbin/rsyslogd /usr/sbin/augenrules
+}
+
+expansion_audit_tool_integrity() {
+    local path=$1 type=audit identity entries expected
+    if [[ $path == /usr/sbin/rsyslogd ]]; then type=rsyslog; fi
+    identity=$(timeout 8 rpm -qf --qf '%{NAME}|%{VENDOR}\n' -- "$path" 2>/dev/null) || return 1
+    [[ $identity == "$type|Red Hat, Inc." ]] || return 1
+    entries=$(timeout 8 rpm -qf --qf '[%{FILENAMES}|%{FILEDIGESTS}\n]' -- "$path" 2>/dev/null) || return 1
+    expected=$(awk -F'|' -v target="$path" -v alias="${path#/usr}" '
+        $1 == target || $1 == alias {seen++; digest=$2}
+        END {if (seen!=1) exit 1; print digest}
+    ' <<< "$entries") || return 1
+    [[ $expected =~ ^[0-9a-f]{64}$ && $(sha256_file "$path") == "$expected" ]]
+}
+
+expansion_audit_check_tools() {
+    local id=$1 path mode gid failed=0 unavailable=0
+    while IFS= read -r path; do
+        if [[ ! -f $path || -L $path ]] ||
+           ! read -r mode gid < <(stat -c '%a %g' -- "$path" 2>/dev/null) ||
+           [[ ! $mode =~ ^[0-7]{1,4}$ || ! $gid =~ ^[0-9]+$ ]]; then
+            unavailable=$((unavailable + 1))
+            continue
+        fi
+        if { [[ $id == V-230472 ]] && (( 8#$mode & ~0755 )); } ||
+           [[ $id == V-230474 && $gid != 0 ]]; then
+            failed=$((failed + 1))
+        fi
+    done < <(expansion_audit_tool_paths)
+    if (( failed )); then
+        rule_result FAIL "$failed listed audit tools fail the required metadata check. $unavailable objects could not be verified."
+    elif (( unavailable )); then
+        rule_result NEEDS_REVIEW "$unavailable listed audit tools are missing, linked, or inaccessible."
+    else
+        rule_result PASS 'All listed audit tools have the required metadata.'
+    fi
+}
+
+expansion_audit_plan_tools() {
+    local chosen_id=$1 sibling path mode gid new_mode new_gid edit_description digest context='' found_requested=0 found_sibling=0
+    if [[ $chosen_id == V-230472 ]]; then sibling=V-230474; else sibling=V-230472; fi
+    if ! have_tools rpm sha256sum realpath; then
+        edit_fail 'audit tool repair requires local RPM and file integrity tools'; return
+    fi
+    while IFS= read -r path; do
+        if [[ ! -f $path || -L $path || $(realpath -e -- "$path" 2>/dev/null) != "$path" ]] ||
+           ! read -r mode gid < <(stat -c '%a %g' -- "$path" 2>/dev/null) ||
+           [[ ! $mode =~ ^[0-7]{1,4}$ || ! $gid =~ ^[0-9]+$ ]]; then
+            edit_fail "expected audit tool could not be verified: $path"; return
+        fi
+        new_mode=keep new_gid=keep edit_description=''
+        if [[ $chosen_id == V-230472 || ${EFFECTIVE[V-230472]+selected} ]] && (( 8#$mode & ~0755 )); then
+            printf -v new_mode '%04o' "$(( 8#$mode & 0755 ))"
+            edit_description="Mode $mode -> $new_mode. Existing owner permissions are preserved."
+            if [[ $chosen_id == V-230472 ]]; then found_requested=1; else found_sibling=1; fi
+        fi
+        if [[ $chosen_id == V-230474 || ${EFFECTIVE[V-230474]+selected} ]] && [[ $gid != 0 ]]; then
+            new_gid=0
+            edit_description+="${edit_description:+ }Group ID $gid -> 0 (root)."
+            if [[ $chosen_id == V-230474 ]]; then found_requested=1; else found_sibling=1; fi
+        fi
+        if [[ $new_mode == keep && $new_gid == keep ]]; then continue; fi
+        if ! expansion_audit_tool_integrity "$path" || ! digest=$(sha256_file "$path"); then
+            edit_fail "RPM did not establish the integrity of $path. Review the binary before changing metadata."; return
+        fi
+        context+="$path $digest"$'\n'
+        edit_metadata "$path" "$new_mode" "$new_gid" "$edit_description" || return 1
+    done < <(expansion_audit_tool_paths)
+    if (( ! found_requested )); then
+        edit_fail 'the selected audit tool metadata already matches'; return
+    fi
+    if (( found_sibling )); then EDIT_RELATED=$sibling EDIT_GROUPED=$sibling; fi
+    EDIT_CONTEXT=$(printf '%s' "$context" | sha256sum) || return 1
+    EDIT_REQUIREMENTS='Confirm that authorized operators and audit services can still use the affected binaries. This metadata change is immediate.'
+}
+
+rule_V_230472_check() { expansion_audit_check_tools V-230472; }
+rule_V_230474_check() { expansion_audit_check_tools V-230474; }
+rule_V_230472_plan() { expansion_audit_plan_tools V-230472; }
+rule_V_230474_plan() { expansion_audit_plan_tools V-230474; }
+
+rule_V_230472_admin() {
+    printf '%s\n' \
+        'Verify the package and content integrity of each audit tool before changing permissions.' \
+        'Remove mode bits outside 0755 and preserve any stricter approved mode. Retest authorized audit tool access.'
+}
+
+rule_V_230474_admin() {
+    printf '%s\n' \
+        'Verify the package and content integrity of each audit tool before changing ownership metadata.' \
+        'Use root group ownership on the listed audit tools, and verify approved users and services can still run them.'
+}
+
+rule_V_230404_check() { expansion_audit_check_rule V-230404; }
+rule_V_230404_plan() { expansion_audit_plan_rule V-230404; }
+rule_V_230404_admin() { expansion_audit_admin_rule V-230404; }
+rule_V_230405_check() { expansion_audit_check_rule V-230405; }
+rule_V_230405_plan() { expansion_audit_plan_rule V-230405; }
+rule_V_230405_admin() { expansion_audit_admin_rule V-230405; }
+rule_V_230406_check() { expansion_audit_check_rule V-230406; }
+rule_V_230406_plan() { expansion_audit_plan_rule V-230406; }
+rule_V_230406_admin() { expansion_audit_admin_rule V-230406; }
+rule_V_230407_check() { expansion_audit_check_rule V-230407; }
+rule_V_230407_plan() { expansion_audit_plan_rule V-230407; }
+rule_V_230407_admin() { expansion_audit_admin_rule V-230407; }
+rule_V_230408_check() { expansion_audit_check_rule V-230408; }
+rule_V_230408_plan() { expansion_audit_plan_rule V-230408; }
+rule_V_230408_admin() { expansion_audit_admin_rule V-230408; }
+rule_V_230409_check() { expansion_audit_check_rule V-230409; }
+rule_V_230409_plan() { expansion_audit_plan_rule V-230409; }
+rule_V_230409_admin() { expansion_audit_admin_rule V-230409; }
+rule_V_230410_check() { expansion_audit_check_rule V-230410; }
+rule_V_230410_plan() { expansion_audit_plan_rule V-230410; }
+rule_V_230410_admin() { expansion_audit_admin_rule V-230410; }
+rule_V_230412_check() { expansion_audit_check_rule V-230412; }
+rule_V_230412_plan() { expansion_audit_plan_rule V-230412; }
+rule_V_230412_admin() { expansion_audit_admin_rule V-230412; }
+rule_V_230418_check() { expansion_audit_check_rule V-230418; }
+rule_V_230418_plan() { expansion_audit_plan_rule V-230418; }
+rule_V_230418_admin() { expansion_audit_admin_rule V-230418; }
+rule_V_230419_check() { expansion_audit_check_rule V-230419; }
+rule_V_230419_plan() { expansion_audit_plan_rule V-230419; }
+rule_V_230419_admin() { expansion_audit_admin_rule V-230419; }
+rule_V_230421_check() { expansion_audit_check_rule V-230421; }
+rule_V_230421_plan() { expansion_audit_plan_rule V-230421; }
+rule_V_230421_admin() { expansion_audit_admin_rule V-230421; }
+rule_V_230422_check() { expansion_audit_check_rule V-230422; }
+rule_V_230422_plan() { expansion_audit_plan_rule V-230422; }
+rule_V_230422_admin() { expansion_audit_admin_rule V-230422; }
+rule_V_230423_check() { expansion_audit_check_rule V-230423; }
+rule_V_230423_plan() { expansion_audit_plan_rule V-230423; }
+rule_V_230423_admin() { expansion_audit_admin_rule V-230423; }
+rule_V_230424_check() { expansion_audit_check_rule V-230424; }
+rule_V_230424_plan() { expansion_audit_plan_rule V-230424; }
+rule_V_230424_admin() { expansion_audit_admin_rule V-230424; }
+rule_V_230426_check() { expansion_audit_check_rule V-230426; }
+rule_V_230426_plan() { expansion_audit_plan_rule V-230426; }
+rule_V_230426_admin() { expansion_audit_admin_rule V-230426; }
+rule_V_230427_check() { expansion_audit_check_rule V-230427; }
+rule_V_230427_plan() { expansion_audit_plan_rule V-230427; }
+rule_V_230427_admin() { expansion_audit_admin_rule V-230427; }
+rule_V_230428_check() { expansion_audit_check_rule V-230428; }
+rule_V_230428_plan() { expansion_audit_plan_rule V-230428; }
+rule_V_230428_admin() { expansion_audit_admin_rule V-230428; }
+rule_V_230429_check() { expansion_audit_check_rule V-230429; }
+rule_V_230429_plan() { expansion_audit_plan_rule V-230429; }
+rule_V_230429_admin() { expansion_audit_admin_rule V-230429; }
+rule_V_230430_check() { expansion_audit_check_rule V-230430; }
+rule_V_230430_plan() { expansion_audit_plan_rule V-230430; }
+rule_V_230430_admin() { expansion_audit_admin_rule V-230430; }
+rule_V_230431_check() { expansion_audit_check_rule V-230431; }
+rule_V_230431_plan() { expansion_audit_plan_rule V-230431; }
+rule_V_230431_admin() { expansion_audit_admin_rule V-230431; }
+rule_V_230432_check() { expansion_audit_check_rule V-230432; }
+rule_V_230432_plan() { expansion_audit_plan_rule V-230432; }
+rule_V_230432_admin() { expansion_audit_admin_rule V-230432; }
+rule_V_230433_check() { expansion_audit_check_rule V-230433; }
+rule_V_230433_plan() { expansion_audit_plan_rule V-230433; }
+rule_V_230433_admin() { expansion_audit_admin_rule V-230433; }
+rule_V_230434_check() { expansion_audit_check_rule V-230434; }
+rule_V_230434_plan() { expansion_audit_plan_rule V-230434; }
+rule_V_230434_admin() { expansion_audit_admin_rule V-230434; }
+rule_V_230435_check() { expansion_audit_check_rule V-230435; }
+rule_V_230435_plan() { expansion_audit_plan_rule V-230435; }
+rule_V_230435_admin() { expansion_audit_admin_rule V-230435; }
+rule_V_230436_check() { expansion_audit_check_rule V-230436; }
+rule_V_230436_plan() { expansion_audit_plan_rule V-230436; }
+rule_V_230436_admin() { expansion_audit_admin_rule V-230436; }
+rule_V_230437_check() { expansion_audit_check_rule V-230437; }
+rule_V_230437_plan() { expansion_audit_plan_rule V-230437; }
+rule_V_230437_admin() { expansion_audit_admin_rule V-230437; }
+rule_V_230444_check() { expansion_audit_check_rule V-230444; }
+rule_V_230444_plan() { expansion_audit_plan_rule V-230444; }
+rule_V_230444_admin() { expansion_audit_admin_rule V-230444; }
+rule_V_230447_check() { expansion_audit_check_rule V-230447; }
+rule_V_230447_plan() { expansion_audit_plan_rule V-230447; }
+rule_V_230447_admin() { expansion_audit_admin_rule V-230447; }
+rule_V_230448_check() { expansion_audit_check_rule V-230448; }
+rule_V_230448_plan() { expansion_audit_plan_rule V-230448; }
+rule_V_230448_admin() { expansion_audit_admin_rule V-230448; }
+rule_V_230462_check() { expansion_audit_check_rule V-230462; }
+rule_V_230462_plan() { expansion_audit_plan_rule V-230462; }
+rule_V_230462_admin() { expansion_audit_admin_rule V-230462; }
+rule_V_230463_check() { expansion_audit_check_rule V-230463; }
+rule_V_230463_plan() { expansion_audit_plan_rule V-230463; }
+rule_V_230463_admin() { expansion_audit_admin_rule V-230463; }
+rule_V_230464_check() { expansion_audit_check_rule V-230464; }
+rule_V_230464_plan() { expansion_audit_plan_rule V-230464; }
+rule_V_230464_admin() { expansion_audit_admin_rule V-230464; }
+rule_V_230465_check() { expansion_audit_check_rule V-230465; }
+rule_V_230465_plan() { expansion_audit_plan_rule V-230465; }
+rule_V_230465_admin() { expansion_audit_admin_rule V-230465; }
+rule_V_230467_check() { expansion_audit_check_rule V-230467; }
+rule_V_230467_plan() { expansion_audit_plan_rule V-230467; }
+rule_V_230467_admin() { expansion_audit_admin_rule V-230467; }
+
+# Additional local policy, file metadata, and desktop controls.
+
+expansion_console_notice() {
+    awk '
+        /^"You are accessing a U\.S\. Government/ {sub(/^"/, ""); banner=1}
+        banner {print; if (sub(/"$/, "")) exit}
+    ' <<< "${OFFICIAL_FIX[V-230227]}" | sed '$s/"$//'
+}
+
+expansion_notice_validate() {
+    local expected actual
+    expected=$(expansion_console_notice) && actual=$(cat -- "$1") || return 1
+    [[ $expected == 'You are accessing a U.S. Government'* && $actual == "$expected" ]]
+}
+
+rule_V_230227_check() {
+    local expected alternate actual
+    expected=$(expansion_console_notice) || return 1
+    [[ $expected == 'You are accessing a U.S. Government'* ]] || return 1
+    if [[ ! -e /etc/issue && ! -L /etc/issue ]]; then
+        rule_result FAIL 'The command-line notice file /etc/issue is absent.'
+    elif ! text_input_file /etc/issue || ! actual=$(cat -- /etc/issue); then
+        rule_result NEEDS_REVIEW 'The console notice is linked, unreadable, or outside the supported file format.'
+    else
+        # The pinned check and fix excerpts disagree on spaces around this dash.
+        alternate=${expected/'interests -- not'/'interests--not'}
+        if [[ $actual == "$expected" || $actual == "$alternate" ]]; then
+            rule_result PASS 'The command-line notice file matches the pinned DoW wording.'
+        else
+            rule_result FAIL 'The command-line notice file differs from the pinned DoW wording.'
+        fi
+    fi
+}
+
+rule_V_230227_plan() {
+    local expected mode=0644
+    expected=$(expansion_console_notice) || return 1
+    if [[ -e /etc/issue ]]; then mode=keep; fi
+    EDIT_REQUIREMENTS='Confirm that the pinned DoW notice is authorized for this host and that the console login reads /etc/issue.'
+    edit_content /etc/issue "$mode" 'Replace the command-line notice with the pinned DoW text shown by --explain V-230227.' \
+        expansion_notice_validate <<< "$expected"
+}
+
+rule_V_230227_admin() {
+    printf '%s\n' 'Use the approved pinned notice in the authoritative console banner file. Verify it at a fresh console login.'
+}
+
+expansion_log_target() {
+    case $1 in
+        V-230245|V-230246|V-230247) [[ -f /var/log/messages && ! -L /var/log/messages ]] && printf '/var/log/messages\n' ;;
+        V-230248|V-230250) [[ -d /var/log && ! -L /var/log ]] && printf '/var/log\n' ;;
+        V-230397) audit_log_object file ;;
+        V-230399) audit_log_object directory ;;
+        *) return 1 ;;
+    esac
+}
+
+expansion_metadata_check() {
+    local path=$1 field=$2 expected=$3 value
+    case $field in
+        mode) value=$(stat -c '%a' -- "$path" 2>/dev/null) && [[ $value =~ ^[0-7]{1,4}$ ]] || return 1
+            (( (8#$value & ~8#$expected) == 0 )) ;;
+        owner) value=$(stat -c '%u' -- "$path" 2>/dev/null) && [[ $value =~ ^[0-9]+$ ]] || return 1
+            [[ $value == "$expected" ]] ;;
+        group) value=$(stat -c '%g' -- "$path" 2>/dev/null) && [[ $value =~ ^[0-9]+$ ]] || return 1
+            [[ $value == "$expected" ]] ;;
+        *) return 1 ;;
+    esac
+    local status=$?
+    if (( status )); then return 2; fi
+    return 0
+}
+
+expansion_log_check() {
+    local id=$1 field=$2 expected=$3 path result
+    if ! path=$(expansion_log_target "$id"); then
+        rule_result NEEDS_REVIEW 'The relevant log object is missing, linked, or cannot be determined. Verify the active logging configuration.'
+        return
+    fi
+    expansion_metadata_check "$path" "$field" "$expected"
+    result=$?
+    case $result in
+        0) rule_result PASS "$path meets the $field requirement ($expected)." ;;
+        2) rule_result FAIL "$path exceeds the allowed mode or differs from the required $field ($expected)." ;;
+        *) rule_result NEEDS_REVIEW "Could not verify $field for $path." ;;
+    esac
+}
+
+expansion_log_admin() {
+    printf '%s\n' 'Review the active log writer, rotation settings, and approved readers. Change only the specified mode, owner, or group on the verified local object. Recheck after log rotation.'
+}
+
+expansion_log_mode_plan() {
+    local id=$1 limit=$2 path mode narrowed group=keep description sibling='' related='' current_gid
+    path=$(expansion_log_target "$id") && mode=$(stat -c '%a' -- "$path") && [[ $mode =~ ^[0-7]{1,4}$ ]] || return 1
+    narrowed=keep
+    if [[ $limit != keep ]]; then printf -v narrowed '0%03o' "$((8#$mode & 8#$limit))"; else group=0; fi
+    description="Keep the existing file contents and set only the required metadata (mode $narrowed, GID $group)."
+    case $id in
+        V-230245) related=V-230247 ;;
+        V-230248) related=V-230250 ;;
+    esac
+    if [[ $related && ${EFFECTIVE[$related]+selected} ]]; then
+        current_gid=$(stat -c '%g' -- "$path") || return 1
+        if [[ $current_gid != 0 ]]; then
+            group=0 sibling=$related
+            description="Set mode $narrowed and GID 0 together for the two selected findings."
+        fi
+    fi
+    EDIT_RELATED=$sibling EDIT_GROUPED=$sibling
+    EDIT_REQUIREMENTS='Confirm logging and rotation ownership, approved reader access, and local management. Verify newly created logs after rotation.'
+    edit_metadata "$path" "$narrowed" "$group" "$description"
+}
+
+rule_V_230245_check() { expansion_log_check V-230245 mode 0640; }
+rule_V_230246_check() { expansion_log_check V-230246 owner 0; }
+rule_V_230247_check() { expansion_log_check V-230247 group 0; }
+rule_V_230248_check() { expansion_log_check V-230248 mode 0755; }
+rule_V_230250_check() { expansion_log_check V-230250 group 0; }
+rule_V_230397_check() { expansion_log_check V-230397 owner 0; }
+rule_V_230399_check() { expansion_log_check V-230399 owner 0; }
+
+rule_V_230245_plan() { expansion_log_mode_plan V-230245 0640; }
+rule_V_230247_plan() { expansion_log_mode_plan V-230247 keep; }
+rule_V_230248_plan() { expansion_log_mode_plan V-230248 0755; }
+rule_V_230250_plan() { expansion_log_mode_plan V-230250 keep; }
+
+rule_V_230245_admin() { expansion_log_admin; }
+rule_V_230246_admin() { expansion_log_admin; }
+rule_V_230247_admin() { expansion_log_admin; }
+rule_V_230248_admin() { expansion_log_admin; }
+rule_V_230250_admin() { expansion_log_admin; }
+rule_V_230397_admin() { expansion_log_admin; }
+rule_V_230399_admin() { expansion_log_admin; }
+
+# Read and change UID on the pinned inode. Refuse linked objects, special
+# bits, capabilities, or ACLs that would require additional rollback data.
+expansion_owner_tool() {
+    local id=$1 operation=$2 path=$3 expected=${4:-} desired=${5:-} target kind=file
+    target=$(expansion_log_target "$id") || return 1
+    [[ $target == "$path" && $path == /var/log/* ]] && edit_safe_path "$path" || return 1
+    if [[ $id == V-230399 ]]; then kind=directory; fi
+    have_tools python3 || return 1
+    timeout --kill-after=2s 15s python3 -I - "$path" "$kind" "$operation" "$expected" "$desired" <<'PYTHON'
+import hashlib
+import os
+import stat
+import sys
+
+
+def snapshot(fd, path, kind):
+    value = os.fstat(fd)
+    entry = os.lstat(path)
+    if (value.st_dev, value.st_ino) != (entry.st_dev, entry.st_ino):
+        raise ValueError('Object was replaced')
+    if kind == 'file':
+        if not stat.S_ISREG(value.st_mode) or value.st_nlink != 1:
+            raise ValueError('Not a single-link regular file')
+    elif not stat.S_ISDIR(value.st_mode):
+        raise ValueError('Not a directory')
+    if value.st_mode & 0o7000:
+        raise ValueError('Special mode bits need separate review')
+    attributes = sorted(os.listxattr(fd))
+    if set(attributes) & {'security.capability', 'system.posix_acl_default', 'system.posix_acl_access'}:
+        raise ValueError('Extended permissions need separate review')
+    digest = hashlib.sha256()
+    for name in attributes:
+        content = os.getxattr(fd, name)
+        digest.update(os.fsencode(name) + b'\0' + str(len(content)).encode('ascii') + b'\0')
+        digest.update(content)
+    return '{}:{}:{:04o}:{}:{}:{}'.format(value.st_uid, value.st_gid, stat.S_IMODE(value.st_mode),
+                                         value.st_dev, value.st_ino, digest.hexdigest())
+
+
+def apply(path, kind, operation, expected, desired):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = snapshot(fd, path, kind)
+        if operation == 'observe':
+            print(before)
+            return
+        old, _, fingerprint = before.partition(':')
+        uid, _, desired_fingerprint = desired.partition(':')
+        if (before != expected or fingerprint != desired_fingerprint or not uid.isdigit() or
+                len(uid) > 10 or int(uid) >= (1 << 32) - 1 or uid == old):
+            raise ValueError('The state changed or the requested transition is invalid')
+        if operation == 'change' and uid != '0':
+            raise ValueError('Only root ownership can be applied')
+        if operation == 'restore' and (old != '0' or uid == '0'):
+            raise ValueError('Invalid rollback ownership')
+        if operation not in ('change', 'restore'):
+            raise ValueError('Unknown operation')
+        os.fchown(fd, int(uid), -1)
+        if snapshot(fd, path, kind) != desired:
+            raise ValueError('Ownership verification failed')
+    finally:
+        os.close(fd)
+
+
+try:
+    apply(*sys.argv[1:])
+except (OSError, ValueError):
+    sys.exit(1)
+PYTHON
+}
+
+expansion_log_owner_plan() {
+    local id=$1 path snapshot uid
+    path=$(expansion_log_target "$id") && snapshot=$(expansion_owner_tool "$id" observe "$path") || {
+        edit_fail 'Owner changes require a pinned local log object with ordinary permissions and no extended ACL.'; return;
+    }
+    uid=${snapshot%%:*}
+    [[ $uid != 0 ]] || return 1
+    ACTION_REQUIREMENTS='Confirm the log writer, rotation settings, and readers work with root ownership. Owner changes take effect immediately.'
+    action_add "$path" "$snapshot" "0:${snapshot#*:}" "UID $uid" 'UID 0 (root)'
+}
+
+rule_V_230246_plan() { expansion_log_owner_plan V-230246; }
+rule_V_230246_observe() { expansion_owner_tool V-230246 observe "$1"; }
+rule_V_230246_change() { expansion_owner_tool V-230246 change "$@"; }
+rule_V_230246_restore() { expansion_owner_tool V-230246 restore "$1" "$3" "$2"; }
+rule_V_230397_plan() { expansion_log_owner_plan V-230397; }
+rule_V_230397_observe() { expansion_owner_tool V-230397 observe "$1"; }
+rule_V_230397_change() { expansion_owner_tool V-230397 change "$@"; }
+rule_V_230397_restore() { expansion_owner_tool V-230397 restore "$1" "$3" "$2"; }
+rule_V_230399_plan() { expansion_log_owner_plan V-230399; }
+rule_V_230399_observe() { expansion_owner_tool V-230399 observe "$1"; }
+rule_V_230399_change() { expansion_owner_tool V-230399 change "$@"; }
+rule_V_230399_restore() { expansion_owner_tool V-230399 restore "$1" "$3" "$2"; }
+
+expansion_public_key_paths() {
+    local path found=0
+    [[ -d /etc/ssh && ! -L /etc/ssh ]] || return 1
+    for path in /etc/ssh/*key.pub; do
+        [[ -e $path || -L $path ]] || continue
+        [[ -f $path && ! -L $path && $path =~ ^/etc/ssh/[a-zA-Z0-9_.-]+key\.pub$ ]] || return 1
+        (( ++found <= 64 )) || return 1
+        printf '%s\n' "$path"
+    done
+    (( found ))
+}
+
+rule_V_230286_check() {
+    local paths path result
+    paths=$(expansion_public_key_paths) || {
+        rule_result NEEDS_REVIEW 'Public host keys are missing or use an unsupported path or link.'; return;
+    }
+    while IFS= read -r path; do
+        expansion_metadata_check "$path" mode 0644
+        result=$?
+        if (( result == 2 )); then rule_result FAIL "At least one public host key exceeds mode 0644 ($path)."; return; fi
+        if (( result )); then rule_result NEEDS_REVIEW 'Public host key metadata could not be verified.'; return; fi
+    done <<< "$paths"
+    rule_result PASS 'Verified the modes of local SSH public host key files.'
+}
+
+rule_V_230286_plan() {
+    local config=/etc/ssh/sshd_config paths path mode narrowed invocation effective config_hash
+    if ! edit_safe_path "$config" || ! text_input_file "$config" || ! edit_target_metadata "$config" ||
+        (( 8#$EDIT_ORIGINAL_MODE & 022 )); then
+        edit_fail 'The SSH configuration must be a trusted, root-controlled regular file.'; return
+    fi
+    paths=$(expansion_public_key_paths) && invocation=$(expanded_sshd_invocation) &&
+        effective=$(standard_ssh_configured_key_paths "$config") && config_hash=$(sha256_file "$config") &&
+        timeout 12 sshd -t -f "$config" >/dev/null 2>&1 || {
+        edit_fail 'Confirm a valid packaged SSH service and a standard public host key layout first.'; return;
+    }
+    while IFS= read -r path; do
+        standard_ssh_host_key_path "$path" || return 1
+        if [[ -f $path && ! -f $path.pub ]]; then return 1; fi
+    done <<< "$effective"
+    while IFS= read -r path; do
+        mode=$(stat -c '%a' -- "$path") && [[ $mode =~ ^[0-7]{1,4}$ ]] || return 1
+        if (( (8#$mode & ~0644) == 0 )); then continue; fi
+        printf -v narrowed '0%03o' "$((8#$mode & 0644))"
+        edit_metadata "$path" "$narrowed" keep "Narrow public key mode from $mode to $narrowed." || return 1
+    done <<< "$paths"
+    EDIT_CONTEXT="$config_hash $invocation"
+    EDIT_REQUIREMENTS='This changes public-key permissions immediately. Preserve the current authorized session and console access for later SSH activation.'
+    EDIT_DISPOSITION=pending
+    EDIT_ACTIVATION='Validate sshd, review the separately approved SSH service activation, then verify a fresh connection and key permissions.'
+}
+
+rule_V_230286_admin() {
+    printf '%s\n' 'Review the effective HostKey paths and tighten the associated public key files. Validate sshd and verify access after planned SSH activation.'
+}
+
+expansion_home_targets() {
+    local id=$1 homes home path name
+    local -a names=(.bash_profile .bash_login .bashrc .bash_logout .profile .cshrc .tcshrc .login .logout .kshrc .zprofile .zshrc .zlogin .zlogout)
+    # The pinned check includes UID 1000 and above. Do not hide unfamiliar
+    # shells, shared homes or unusual paths filtered by the native action.
+    homes=$(awk -F: '
+        NF != 7 || $3 !~ /^[0-9]+$/ {invalid=1; next}
+        {uses[$6]++}
+        $3 >= 1000 && $3 != 65534 && $7 !~ /nologin|\/false$/ {wanted[$6]=1}
+        END {
+            if (invalid) exit 1
+            for (home in wanted) print (uses[home] == 1 && home ~ /^\/home\/[A-Za-z0-9_.@-]+$/ ? home : "gap")
+        }
+    ' /etc/passwd | LC_ALL=C sort) || return 1
+    while IFS= read -r home; do
+        [[ $home ]] || continue
+        if [[ $home == gap ]] || ! attended_home_account "$home" >/dev/null; then
+            printf 'gap\n'; continue
+        fi
+        if [[ $id == V-230321 ]]; then printf '%s\n' "$home"; continue; fi
+        if [[ ! -d $home || -L $home ]]; then
+            printf 'gap\n'; continue
+        fi
+        for name in "${names[@]}"; do
+            path=$home/$name
+            if [[ -e $path || -L $path ]]; then printf '%s\n' "$path"; fi
+        done
+    done <<< "$homes"
+}
+
+expansion_home_mode_action() {
+    local id=$1 operation=$2 target=$3 home account uid
+    shift 3
+    if [[ $id == V-230321 ]]; then
+        home=$target operation=home-mode-$operation
+    else
+        home=${target%/*} operation=init-mode-$operation
+    fi
+    [[ $home =~ ^/home/[A-Za-z0-9_.@-]+$ ]] && account=$(attended_home_account "$home") || return 1
+    IFS=$'\t' read -r _ uid _ _ _ <<< "$account"
+    attended_home_tool "$operation" "$target" "$uid" "$@"
+}
+
+expansion_home_mode_check() {
+    local id=$1 limit=$2 targets path state mode failure=0 partial=0 count=0
+    targets=$(expansion_home_targets "$id") || { rule_result NEEDS_REVIEW 'Local account evidence is incomplete.'; return; }
+    while IFS= read -r path; do
+        [[ $path ]] || continue
+        if [[ $path == gap ]] || ! state=$(expansion_home_mode_action "$id" observe "$path"); then
+            partial=1; continue
+        fi
+        IFS=: read -r _ _ mode _ <<< "$state"
+        [[ $mode =~ ^[0-7]{4}$ ]] || return 1
+        (( ++count ))
+        if (( 8#$mode & ~8#$limit )); then failure=1; fi
+    done <<< "$targets"
+    if (( failure )); then rule_result FAIL "At least one verified object exceeds mode $limit. Ambiguous home layouts are left for review."
+    elif (( partial || count == 0 )) || [[ $id == V-230325 ]]; then
+        rule_result NEEDS_REVIEW 'No violation was confirmed in the bounded scan. Verify excluded or nonstandard accounts and initialization files.'
+    else rule_result PASS "Verified $count eligible objects against mode $limit."; fi
+}
+
+expansion_home_mode_plan() {
+    local id=$1 limit=$2 targets path state uid gid mode identity narrowed
+    targets=$(expansion_home_targets "$id") || return 1
+    while IFS= read -r path; do
+        [[ $path && $path != gap ]] || continue
+        state=$(expansion_home_mode_action "$id" observe "$path") || continue
+        IFS=: read -r uid gid mode identity <<< "$state"
+        [[ $mode =~ ^[0-7]{4}$ ]] || return 1
+        if (( (8#$mode & ~8#$limit) == 0 )); then continue; fi
+        printf -v narrowed '%04o' "$((8#$mode & 8#$limit))"
+        action_add "$path" "$state" "$uid:$gid:$narrowed:$identity" "mode $mode" "mode $narrowed" || return 1
+    done <<< "$targets"
+    ACTION_REQUIREMENTS='Confirm affected local users and file-sharing requirements. Linked objects, shared homes, nonstandard paths, and extended ACLs require review.'
+}
+
+rule_V_230321_check() { expansion_home_mode_check V-230321 0750; }
+rule_V_230321_plan() { expansion_home_mode_plan V-230321 0750; }
+rule_V_230321_observe() { expansion_home_mode_action V-230321 observe "$1"; }
+rule_V_230321_change() { expansion_home_mode_action V-230321 change "$@"; }
+rule_V_230321_restore() { expansion_home_mode_action V-230321 change "$1" "$3" "$2"; }
+rule_V_230325_check() { expansion_home_mode_check V-230325 0740; }
+rule_V_230325_plan() { expansion_home_mode_plan V-230325 0740; }
+rule_V_230325_observe() { expansion_home_mode_action V-230325 observe "$1"; }
+rule_V_230325_change() { expansion_home_mode_action V-230325 change "$@"; }
+rule_V_230325_restore() { expansion_home_mode_action V-230325 change "$1" "$3" "$2"; }
+rule_V_230321_admin() { printf '%s\n' 'Verify all local interactive home directories. Review shared layouts and preserve stricter permissions while removing access beyond 0750.'; }
+rule_V_230325_admin() { printf '%s\n' 'Identify initialization files for all deployed shells. Preserve existing stricter modes and remove bits outside 0740 from each authorized local file.'; }
+
+expansion_desktop_assignment() {
+    local profile=$1 section=$2 key=$3 database directory file value result='' profile_path
+    profile_path=/etc/dconf/profile/$profile
+    desktop_controlled_source "$profile_path" || return 1
+    database=$(desktop_profile_database "$profile" "$profile_path") || return 1
+    if [[ $profile == gdm && $database != local ]]; then return 1; fi
+    directory=/etc/dconf/db/$database.d
+    [[ -d $directory ]] && edit_safe_path "$directory" && edit_target_metadata "$directory" &&
+        (( !(8#$EDIT_ORIGINAL_MODE & 022) )) || return 1
+    for file in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
+        [[ -e $file || -L $file ]] || continue
+        [[ ${file##*/} != locks ]] || continue
+        [[ ${file##*/} =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] && desktop_controlled_source "$file" || return 1
+        value=$(expanded_dconf_extract "$section" "$key" "$file" && printf '.') || return 1
+        [[ $value != . ]] || continue
+        value=${value%$'\n.'}
+        [[ ! $result && $value && $value != *$'\n'* ]] || return 1
+        result=$value
+    done
+    printf '%s\n' "$result"
+}
+
+expansion_screen_value_valid() {
+    local key=$1 value=$2
+    case $key in
+        lock-enabled|banner-message-enable) [[ $value == true || $value == false || ! $value ]] ;;
+        lock-delay) [[ ! $value ]] || { [[ $value =~ ^uint32\ ([0-9]{1,10})$ ]] && (( 10#${BASH_REMATCH[1]} <= 4294967295 )); } ;;
+        *) return 1 ;;
+    esac
+}
+
+expansion_screen_value_compliant() {
+    local key=$1 value=$2
+    case $key in
+        lock-enabled|banner-message-enable) [[ $value == true ]] ;;
+        lock-delay) [[ $value =~ ^uint32\ ([0-9]{1,10})$ ]] && (( 10#${BASH_REMATCH[1]} <= 5 )) ;;
+        *) return 1 ;;
+    esac
+}
+
+expansion_desktop_check() {
+    local profile=$1 section=$2 key=$3 source effective
+    expanded_gnome_applicable || return 0
+    if ! source=$(expansion_desktop_assignment "$profile" "$section" "$key") || ! expansion_screen_value_valid "$key" "$source"; then
+        rule_result NEEDS_REVIEW "Could not resolve the authoritative dconf source for $key."
+        return
+    fi
+    if [[ $profile == gdm ]]; then
+        if expansion_screen_value_compliant "$key" "$source"; then
+            rule_result PASS 'The active GDM profile source enables the notice. Verify the actual greeter after publication.'
+        else rule_result FAIL 'The active GDM profile source lacks banner-message-enable=true.'; fi
+        return
+    fi
+    if (( EUID != 0 )) && [[ ${XDG_SESSION_TYPE-} =~ ^(x11|wayland)$ && ${DBUS_SESSION_BUS_ADDRESS-} ]] &&
+       have_tools gsettings && effective=$(timeout 8 gsettings get "${section//\//.}" "$key" 2>/dev/null) &&
+       expansion_screen_value_valid "$key" "$effective"; then
+        if ! expansion_screen_value_compliant "$key" "$effective"; then
+            rule_result FAIL "The current GNOME session reports $key=$effective."
+        elif [[ ! $source ]] || expansion_screen_value_compliant "$key" "$source"; then
+            rule_result NEEDS_REVIEW "The observed session meets the $key requirement. Verify the other relevant user sessions and overrides."
+        else rule_result NEEDS_REVIEW "The session and configured $key disagree. Check the active profile and overrides."; fi
+        return
+    fi
+    if ! expansion_screen_value_compliant "$key" "$source"; then CHECK_PLAN_CANDIDATE=1; fi
+    rule_result NEEDS_REVIEW "The system source has $key=${source:-absent}. Verify the effective value in a fresh GNOME session."
+}
+
+expansion_desktop_plan() {
+    local id=$1 profile=$2 section=$3 key=$4 required=$5 owner previous expected draft preview
+    [[ $(expanded_gui_state) == gnome ]] && desktop_source_snapshot "$profile" || return 1
+    if [[ $profile == gdm ]]; then
+        [[ $DESKTOP_DATABASE == local ]] || return 1
+        expected=$(awk '/^banner-message-text=/ {sub(/^banner-message-text=/,"" ); print; exit}' <<< "${OFFICIAL_FIX[V-230226]}")
+        if ! desktop_key_owner "$section" banner-message-text || [[ ! $expected || $DESKTOP_VALUE != "$expected" ]]; then
+            edit_fail 'Stage the authorized notice text using V-230226 before enabling it.'; return
+        fi
+    fi
+    desktop_key_owner "$section" "$key" || return 1
+    owner=$DESKTOP_OWNER previous=$DESKTOP_VALUE
+    expansion_screen_value_valid "$key" "$previous" && ! expansion_screen_value_compliant "$key" "$previous" || return 1
+    desktop_source_target "$id" "$owner" || return 1
+    draft=$EDIT_TEMP/new-desktop-key
+    desktop_render_key "$DESKTOP_INPUT" "$section" "$key" "$required" "$id" > "$draft" || return 1
+    preview="- $key=${previous:-absent}"$'\n'"+ $key=$required"
+    if [[ $id == V-230347 && ${EFFECTIVE[V-244535]+selected} ]] &&
+       desktop_key_owner "$section" lock-delay && [[ $DESKTOP_OWNER == "$owner" ]] &&
+       expansion_screen_value_valid lock-delay "$DESKTOP_VALUE" && ! expansion_screen_value_compliant lock-delay "$DESKTOP_VALUE"; then
+        desktop_render_key "$draft" "$section" lock-delay 'uint32 5' V-244535 > "$draft.pair" || return 1
+        draft=$draft.pair
+        preview+=$'\n'"- lock-delay=${DESKTOP_VALUE:-absent}"$'\n+ lock-delay=uint32 5'
+        EDIT_RELATED=V-244535 EDIT_GROUPED=V-244535
+    fi
+    desktop_stage_activation 'Review pending dconf edits and publish with an approved dconf update. Verify the new setting in a fresh session or greeter as applicable.'
+    edit_content "$DESKTOP_TARGET" "$DESKTOP_MODE" "$preview" desktop_validate_source < "$draft"
+}
+
+rule_V_230347_check() { expansion_desktop_check user org/gnome/desktop/screensaver lock-enabled; }
+rule_V_244535_check() { expansion_desktop_check user org/gnome/desktop/screensaver lock-delay; }
+rule_V_244519_check() { expansion_desktop_check gdm org/gnome/login-screen banner-message-enable; }
+rule_V_230347_plan() { expansion_desktop_plan V-230347 user org/gnome/desktop/screensaver lock-enabled true; }
+rule_V_244535_plan() { expansion_desktop_plan V-244535 user org/gnome/desktop/screensaver lock-delay 'uint32 5'; }
+rule_V_244519_plan() { expansion_desktop_plan V-244519 gdm org/gnome/login-screen banner-message-enable true; }
+rule_V_230347_admin() { printf '%s\n' 'Set lock-enabled=true in the active GNOME profile. Verify locking and reauthentication in a fresh graphical session.'; }
+rule_V_244535_admin() { printf '%s\n' 'Set the GNOME lock-delay to uint32 5 or a shorter delay. Verify the screen locks within five seconds of screensaver activation.'; }
+rule_V_244519_admin() { printf '%s\n' 'Use the verified GDM profile to display the authorized consent banner. Verify the visible notice at a fresh greeter.'; }
+
+# Read literal Manager settings across the standard drop-in precedence paths.
+expansion_burst_setting() {
+    awk '
+        /^[[:space:]]*(#|;|$)/ {next}
+        /^[[:space:]]*\[/ {section=$0; gsub(/[[:space:]]/, "", section); next}
+        section == "[Manager]" && /^[[:space:]]*CtrlAltDelBurstAction([[:space:]]|=|$)/ {
+            n++
+            if (!sub(/^[[:space:]]*CtrlAltDelBurstAction[[:space:]]*=[[:space:]]*/, "")) bad=1
+            value=$0; sub(/[[:space:]]*$/, "", value)
+            if (value !~ /^[a-z][a-z-]*$/) bad=1
+        }
+        END {if (bad || n>1) exit 1; if (n) print value}
+    ' "$1"
+}
+
+expansion_burst_sources() {
+    local directory path name setting sha base context=''
+    local -A files=()
+    local -a ordered=()
+    EXP_BURST_VALUE='' EXP_BURST_OWNER='' EXP_BURST_CONTEXT=''
+    for base in /etc/systemd/system.conf /run/systemd/system.conf /usr/local/lib/systemd/system.conf /usr/lib/systemd/system.conf; do
+        if [[ -e $base || -L $base ]]; then ordered+=("$base"); break; fi
+    done
+    for directory in /usr/lib/systemd/system.conf.d /usr/local/lib/systemd/system.conf.d /run/systemd/system.conf.d /etc/systemd/system.conf.d; do
+        [[ -e $directory || -L $directory ]] || continue
+        [[ -d $directory && ! -L $directory ]] || return 1
+        for path in "$directory"/*.conf; do
+            [[ -e $path || -L $path ]] || continue
+            name=${path##*/}
+            [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*\.conf$ ]] || return 1
+            files[$name]=$path
+            (( ${#files[@]} <= 128 )) || return 1
+        done
+    done
+    if (( ${#files[@]} )); then
+        while IFS= read -r name; do ordered+=("${files[$name]}"); done < <(printf '%s\n' "${!files[@]}" | LC_ALL=C sort)
+    fi
+    for path in "${ordered[@]}"; do
+        if [[ -L $path && $(readlink -- "$path") == /dev/null ]]; then
+            context+=$'\n'"$path mask"
+            continue
+        fi
+        text_input_file "$path" && edit_target_metadata "$path" && (( !(8#$EDIT_ORIGINAL_MODE & 022) )) || return 1
+        sha=$(sha256_file "$path") && setting=$(expansion_burst_setting "$path") || return 1
+        [[ $(sha256_file "$path") == "$sha" ]] || return 1
+        context+=$'\n'"$path $sha"
+        if [[ $setting ]]; then EXP_BURST_VALUE=$setting EXP_BURST_OWNER=$path; fi
+    done
+    EXP_BURST_CONTEXT=$context
+}
+
+rule_V_230531_check() {
+    if ! expansion_burst_sources; then
+        rule_result NEEDS_REVIEW 'The systemd Manager configuration is unreadable or ambiguous.'
+    elif [[ $EXP_BURST_VALUE == none ]]; then
+        rule_result PASS 'The effective persistent Manager configuration sets CtrlAltDelBurstAction=none.'
+    else
+        rule_result FAIL "The effective persistent CtrlAltDelBurstAction is ${EXP_BURST_VALUE:-unset}."
+    fi
+}
+
+expansion_burst_validate() { [[ $(expansion_burst_setting "$1") == none ]]; }
+
+rule_V_230531_plan() {
+    local path mode=keep draft=$EDIT_TEMP/burst.conf input
+    expansion_burst_sources && [[ $EXP_BURST_VALUE != none ]] || return 1
+    path=$EXP_BURST_OWNER
+    if [[ -z $path ]]; then
+        if [[ -d /etc/systemd/system.conf.d ]]; then path=/etc/systemd/system.conf.d/90-rhel8-stig-burst.conf
+        else path=/etc/systemd/system.conf; fi
+    elif [[ $path != /etc/systemd/system.conf && $path != /etc/systemd/system.conf.d/* ]]; then
+        edit_fail 'A vendor or runtime file owns this Manager setting. Review a local override and its ordering.'; return
+    fi
+    input=$path
+    if [[ ! -e $path && ! -L $path ]]; then input=/dev/null mode=0644; fi
+    desktop_render_key "$input" Manager CtrlAltDelBurstAction none V-230531 > "$draft" || return 1
+    EDIT_CONTEXT=$EXP_BURST_CONTEXT EDIT_DISPOSITION=pending
+    EDIT_REQUIREMENTS='Confirm the host recovery procedures do not depend on the rapid console key sequence.'
+    EDIT_ACTIVATION='Review the persistent Manager change before the systemd owner activates it or schedules a reboot. Verify the effective setting without triggering a production reboot.'
+    edit_content "$path" "$mode" "- CtrlAltDelBurstAction=${EXP_BURST_VALUE:-unset}
++ CtrlAltDelBurstAction=none" expansion_burst_validate < "$draft"
+}
+
+rule_V_230531_admin() {
+    printf '%s\n' 'Set CtrlAltDelBurstAction=none in the authoritative systemd Manager configuration, then arrange approved activation and verification.'
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
