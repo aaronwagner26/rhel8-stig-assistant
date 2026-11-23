@@ -1,0 +1,23 @@
+name: Bug report
+description: Report an operator workflow, check, or packaging problem.
+title: "[Bug] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Release version
+      description: Run the script with --version.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the OS version, mode, terminal dimensions, and benchmark revision if relevant. Use a synthetic hostname.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Steps and behavior
+      description: Describe what you expected and what happened. Remove credentials, host identifiers, private evidence, raw checklists, and configuration backups.
+    validations:
+      required: true
